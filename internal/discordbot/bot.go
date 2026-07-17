@@ -1,0 +1,102 @@
+// Package discordbot owns the Discord connection and interaction routing.
+package discordbot
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"discord-bot/internal/recon"
+
+	"github.com/bwmarrin/discordgo"
+)
+
+// SubdomainFinder is the capability needed by the /subs command.
+type SubdomainFinder interface {
+	Enumerate(ctx context.Context, rootDomain string) ([]string, error)
+}
+
+// ReconRunner is the complete passive-enumeration and HTTP-probing workflow.
+type ReconRunner interface {
+	Run(ctx context.Context, rootDomain string) (recon.Result, error)
+}
+
+// Bot manages a Discord session and its commands.
+type Bot struct {
+	session    *discordgo.Session
+	guildID    string
+	finder     SubdomainFinder
+	recon      ReconRunner
+	runContext context.Context
+}
+
+// New constructs a Discord bot without opening its network connection.
+func New(token, guildID string, finder SubdomainFinder, reconRunner ReconRunner) (*Bot, error) {
+	if token == "" {
+		return nil, fmt.Errorf("Discord token is required")
+	}
+	if finder == nil {
+		return nil, fmt.Errorf("subdomain finder is required")
+	}
+	if reconRunner == nil {
+		return nil, fmt.Errorf("recon runner is required")
+	}
+
+	session, err := discordgo.New("Bot " + token)
+	if err != nil {
+		return nil, fmt.Errorf("create Discord session: %w", err)
+	}
+	session.Identify.Intents = discordgo.IntentsGuilds
+
+	bot := &Bot{session: session, guildID: guildID, finder: finder, recon: reconRunner}
+	session.AddHandler(bot.readyHandler)
+	session.AddHandler(bot.interactionHandler)
+
+	return bot, nil
+}
+
+// Run connects, registers commands, and waits for cancellation.
+func (b *Bot) Run(ctx context.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("context is required")
+	}
+	b.runContext = ctx
+	if err := b.session.Open(); err != nil {
+		return fmt.Errorf("connect to Discord: %w", err)
+	}
+	defer b.session.Close()
+
+	if _, err := b.session.ApplicationCommandBulkOverwrite(b.session.State.User.ID, b.guildID, commandDefinitions()); err != nil {
+		return fmt.Errorf("register application commands: %w", err)
+	}
+
+	if b.guildID == "" {
+		log.Println("registered global commands (they may take a while to appear)")
+	} else {
+		log.Printf("registered commands in development guild %s", b.guildID)
+	}
+
+	log.Println("bot is running; press Ctrl+C to stop")
+	<-ctx.Done()
+	log.Println("shutting down")
+	return nil
+}
+
+func (b *Bot) readyHandler(_ *discordgo.Session, event *discordgo.Ready) {
+	log.Printf("connected as %s", event.User.String())
+}
+
+func (b *Bot) interactionHandler(session *discordgo.Session, event *discordgo.InteractionCreate) {
+	if event.Type != discordgo.InteractionApplicationCommand {
+		return
+	}
+
+	switch event.ApplicationCommandData().Name {
+	case "ping":
+		b.handlePing(session, event)
+	case "subs":
+		b.handleSubs(session, event)
+	case "scan":
+		b.handleScan(session, event)
+	}
+}

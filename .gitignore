@@ -1,0 +1,5 @@
+.env
+discord-bot
+*.log
+/secrets/
+/results/
