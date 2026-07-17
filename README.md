@@ -1,6 +1,6 @@
 # Discord bot in Go
 
-A Discord bot built with [DiscordGo](https://github.com/bwmarrin/discordgo), Subfinder, and HTTPX. It provides `/ping` plus administrator-only `/subs` and `/scan` commands.
+A Discord bot built with [DiscordGo](https://github.com/bwmarrin/discordgo), Subfinder, and HTTPX. It provides `/ping` plus administrator-only `/scan` and `/results` commands.
 
 ## 1. Create the Discord application
 
@@ -28,7 +28,7 @@ go mod tidy
 go run .
 ```
 
-In your Discord test server, enter `/ping`, `/subs domain:example.com`, or `/scan domain:example.com`. Only server administrators can use the discovery commands, and you should only scan domains you own or are authorized to assess. Stop the bot with `Ctrl+C`.
+In your Discord test server, enter `/ping`, `/scan domain:example.com`, or `/results domain:example.com`. Only server administrators can use the discovery commands, and you should only scan domains you own or are authorized to assess. Stop the bot with `Ctrl+C`.
 
 `/scan` acknowledges immediately, runs in the background without an interaction timeout, and posts `httpx_results.txt` in the channel when finished. It first runs consolidated passive discovery and then probes every discovered name on ports `80`, `443`, `8443`, `8444`, `8080`, `3000`, and `5000`, with 15 HTTPX workers. HTTPX uses its normal HTTP/HTTPS fallback behavior, so it keeps one endpoint result per responsive host/port instead of emitting both schemes. Each run also creates:
 

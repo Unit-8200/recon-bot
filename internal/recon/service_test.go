@@ -2,6 +2,7 @@ package recon
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,6 +15,55 @@ type fakeEnumerator struct{ values []string }
 
 func (f fakeEnumerator) Enumerate(context.Context, string) ([]string, error) {
 	return append([]string(nil), f.values...), nil
+}
+
+func TestLatestReturnsNewestExactDomainResult(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	service, err := New(root, fakeEnumerator{}, fakeProber{})
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+
+	fixtures := map[string]string{
+		"20260717T120000.000Z_example.com":     HTTPXFilename,
+		"20260717T130000.000Z_notexample.com":  HTTPXFilename,
+		"20260717T140000.000Z_example.com":     HTTPXFilename,
+		"20260717T150000.000Z_api.example.com": HTTPXFilename,
+	}
+	for directory, filename := range fixtures {
+		path := filepath.Join(root, directory)
+		if err := os.Mkdir(path, 0o750); err != nil {
+			t.Fatalf("Mkdir(%q): %v", path, err)
+		}
+		if err := os.WriteFile(filepath.Join(path, filename), []byte("result\n"), 0o640); err != nil {
+			t.Fatalf("WriteFile(%q): %v", path, err)
+		}
+	}
+
+	result, err := service.Latest("example.com")
+	if err != nil {
+		t.Fatalf("Latest(): %v", err)
+	}
+	if filepath.Base(result.Directory) != "20260717T140000.000Z_example.com" {
+		t.Fatalf("directory = %q", result.Directory)
+	}
+	if filepath.Base(result.HTTPXFile) != HTTPXFilename {
+		t.Fatalf("HTTPX file = %q", result.HTTPXFile)
+	}
+}
+
+func TestLatestReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
+	service, err := New(t.TempDir(), fakeEnumerator{}, fakeProber{})
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	if _, err := service.Latest("example.com"); !errors.Is(err, ErrResultsNotFound) {
+		t.Fatalf("Latest() error = %v, want ErrResultsNotFound", err)
+	}
 }
 
 type fakeProber struct{ values []httpprobe.Result }

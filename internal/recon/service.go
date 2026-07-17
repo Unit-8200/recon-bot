@@ -3,10 +3,12 @@ package recon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +20,9 @@ const (
 	SubdomainsFilename = "raw_subdomains.txt"
 	HTTPXFilename      = "httpx_results.txt"
 )
+
+// ErrResultsNotFound indicates that no completed scan exists for a domain.
+var ErrResultsNotFound = errors.New("scan results not found")
 
 // Enumerator provides the passive discovery phase.
 type Enumerator interface {
@@ -100,6 +105,67 @@ func (s *Service) Run(ctx context.Context, rootDomain string) (Result, error) {
 	}
 
 	return result, nil
+}
+
+// Latest returns the newest persisted HTTPX artifact for an exact root domain.
+func (s *Service) Latest(rootDomain string) (Result, error) {
+	domain, err := subdomains.NormalizeRootDomain(rootDomain)
+	if err != nil {
+		return Result{}, err
+	}
+
+	entries, err := os.ReadDir(s.outputRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return Result{}, fmt.Errorf("%w for %s", ErrResultsNotFound, domain)
+	}
+	if err != nil {
+		return Result{}, fmt.Errorf("read results directory: %w", err)
+	}
+
+	candidates := make([]string, 0)
+	for _, entry := range entries {
+		if entry.IsDir() && runDirectoryMatches(entry.Name(), domain) {
+			candidates = append(candidates, entry.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(candidates)))
+
+	for _, name := range candidates {
+		directory := filepath.Join(s.outputRoot, name)
+		httpxPath := filepath.Join(directory, HTTPXFilename)
+		if info, statErr := os.Stat(httpxPath); statErr == nil && info.Mode().IsRegular() {
+			return Result{
+				Domain:         domain,
+				Directory:      directory,
+				SubdomainsFile: filepath.Join(directory, SubdomainsFilename),
+				HTTPXFile:      httpxPath,
+			}, nil
+		}
+	}
+
+	return Result{}, fmt.Errorf("%w for %s", ErrResultsNotFound, domain)
+}
+
+func runDirectoryMatches(name, domain string) bool {
+	const timestampLength = len("20060102T150405.000Z")
+	if len(name) <= timestampLength || name[timestampLength] != '_' {
+		return false
+	}
+	if _, err := time.Parse("20060102T150405.000Z", name[:timestampLength]); err != nil {
+		return false
+	}
+
+	remainder := name[timestampLength+1:]
+	if remainder == domain {
+		return true
+	}
+	prefix := domain + "_"
+	if !strings.HasPrefix(remainder, prefix) {
+		return false
+	}
+	collisionSuffix := strings.TrimPrefix(remainder, prefix)
+	_, err := strconv.ParseUint(collisionSuffix, 10, 32)
+	return err == nil
 }
 
 func (s *Service) createRunDirectory(domain string) (string, error) {

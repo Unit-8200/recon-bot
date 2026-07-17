@@ -2,18 +2,16 @@ package discordbot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"strings"
-	"time"
+
+	"discord-bot/internal/recon"
 
 	"github.com/bwmarrin/discordgo"
 )
-
-// /subs still edits its deferred interaction response, so keep that passive-only
-// command below Discord's interaction-token window. /scan runs in the background.
-const passiveEnumerationTimeout = 10 * time.Minute
 
 func commandDefinitions() []*discordgo.ApplicationCommand {
 	adminPermissions := int64(discordgo.PermissionAdministrator)
@@ -23,20 +21,6 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 		{
 			Name:        "ping",
 			Description: "Check whether the bot is online",
-		},
-		{
-			Name:                     "subs",
-			Description:              "Passively enumerate subdomains for an authorized root domain",
-			DefaultMemberPermissions: &adminPermissions,
-			Contexts:                 &guildContexts,
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "domain",
-					Description: "Root domain, for example example.com",
-					Required:    true,
-				},
-			},
 		},
 		{
 			Name:                     "scan",
@@ -52,6 +36,20 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 				},
 			},
 		},
+		{
+			Name:                     "results",
+			Description:              "Get the latest completed scan results for a root domain",
+			DefaultMemberPermissions: &adminPermissions,
+			Contexts:                 &guildContexts,
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "domain",
+					Description: "Root domain, for example example.com",
+					Required:    true,
+				},
+			},
+		},
 	}
 }
 
@@ -59,67 +57,6 @@ func (b *Bot) handlePing(session *discordgo.Session, event *discordgo.Interactio
 	content := fmt.Sprintf("Pong! Gateway latency: %s", session.HeartbeatLatency())
 	if err := respond(session, event, content, false); err != nil {
 		log.Printf("respond to /ping: %v", err)
-	}
-}
-
-func (b *Bot) handleSubs(session *discordgo.Session, event *discordgo.InteractionCreate) {
-	if event.Member == nil || event.Member.Permissions&discordgo.PermissionAdministrator == 0 {
-		if err := respond(session, event, "Only server administrators can use `/subs`.", true); err != nil {
-			log.Printf("reject /subs: %v", err)
-		}
-		return
-	}
-
-	domain, ok := stringOption(event.ApplicationCommandData().Options, "domain")
-	if !ok {
-		if err := respond(session, event, "The `domain` option is required.", true); err != nil {
-			log.Printf("validate /subs: %v", err)
-		}
-		return
-	}
-
-	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{Flags: discordgo.MessageFlagsEphemeral},
-	}); err != nil {
-		log.Printf("defer /subs response: %v", err)
-		return
-	}
-
-	parent := b.runContext
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(parent, passiveEnumerationTimeout)
-	defer cancel()
-
-	results, err := b.finder.Enumerate(ctx, domain)
-	if err != nil {
-		log.Printf("enumerate subdomains for %q: %v", domain, err)
-		content := "Subdomain enumeration failed. Check that the value is a root domain and review the bot logs."
-		if _, editErr := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &content}); editErr != nil {
-			log.Printf("report /subs failure: %v", editErr)
-		}
-		return
-	}
-
-	if len(results) == 0 {
-		content := fmt.Sprintf("No subdomains were found for `%s`.", domain)
-		if _, err := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &content}); err != nil {
-			log.Printf("edit empty /subs response: %v", err)
-		}
-		return
-	}
-
-	content := fmt.Sprintf("Found **%d** unique subdomains for `%s`.", len(results), domain)
-	resultFile := strings.NewReader(strings.Join(results, "\n") + "\n")
-	if _, err := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{
-		Content: &content,
-		Files: []*discordgo.File{
-			{Name: "subdomains.txt", ContentType: "text/plain; charset=utf-8", Reader: resultFile},
-		},
-	}); err != nil {
-		log.Printf("send /subs results: %v", err)
 	}
 }
 
@@ -196,6 +133,64 @@ func (b *Bot) runScan(ctx context.Context, session *discordgo.Session, channelID
 		if _, sendErr := session.ChannelMessageSend(channelID, fallback); sendErr != nil {
 			log.Printf("report /scan publish failure: %v", sendErr)
 		}
+	}
+}
+
+func (b *Bot) handleResults(session *discordgo.Session, event *discordgo.InteractionCreate) {
+	if event.Member == nil || event.Member.User == nil || event.Member.Permissions&discordgo.PermissionAdministrator == 0 {
+		if err := respond(session, event, "Only server administrators can use `/results`.", true); err != nil {
+			log.Printf("reject /results: %v", err)
+		}
+		return
+	}
+
+	domain, ok := stringOption(event.ApplicationCommandData().Options, "domain")
+	if !ok {
+		if err := respond(session, event, "The `domain` option is required.", true); err != nil {
+			log.Printf("validate /results: %v", err)
+		}
+		return
+	}
+
+	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{Flags: discordgo.MessageFlagsEphemeral},
+	}); err != nil {
+		log.Printf("defer /results response: %v", err)
+		return
+	}
+
+	result, err := b.recon.Latest(domain)
+	if err != nil {
+		content := "Could not read previous scan results. Review the bot logs."
+		if errors.Is(err, recon.ErrResultsNotFound) {
+			content = fmt.Sprintf("No completed scan results found for `%s`.", domain)
+		} else {
+			log.Printf("find /results for %q: %v", domain, err)
+		}
+		if _, editErr := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &content}); editErr != nil {
+			log.Printf("report /results failure: %v", editErr)
+		}
+		return
+	}
+
+	file, err := os.Open(result.HTTPXFile)
+	if err != nil {
+		log.Printf("open /results file for %q: %v", domain, err)
+		content := "The saved HTTPX results could not be opened. Review the bot logs."
+		_, _ = session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &content})
+		return
+	}
+	defer file.Close()
+
+	content := fmt.Sprintf("Latest scan results for `%s`.", result.Domain)
+	if _, err := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{
+		Content: &content,
+		Files: []*discordgo.File{
+			{Name: recon.HTTPXFilename, ContentType: "text/plain; charset=utf-8", Reader: file},
+		},
+	}); err != nil {
+		log.Printf("send /results for %q: %v", domain, err)
 	}
 }
 

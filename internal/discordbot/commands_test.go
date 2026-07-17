@@ -13,20 +13,20 @@ func TestCommandDefinitions(t *testing.T) {
 	if len(commands) != 3 {
 		t.Fatalf("got %d commands, want 3", len(commands))
 	}
-	if commands[1].Name != "subs" {
-		t.Fatalf("second command is %q, want subs", commands[1].Name)
+	if commands[1].Name != "scan" {
+		t.Fatalf("second command is %q, want scan", commands[1].Name)
 	}
 	if commands[1].DefaultMemberPermissions == nil || *commands[1].DefaultMemberPermissions != discordgo.PermissionAdministrator {
-		t.Fatal("/subs must default to administrator-only")
+		t.Fatal("/scan must default to administrator-only")
 	}
 	if len(commands[1].Options) != 1 || !commands[1].Options[0].Required {
-		t.Fatal("/subs must have one required domain option")
+		t.Fatal("/scan must have one required domain option")
 	}
-	if commands[2].Name != "scan" {
-		t.Fatalf("third command is %q, want scan", commands[2].Name)
+	if commands[2].Name != "results" {
+		t.Fatalf("third command is %q, want results", commands[2].Name)
 	}
 	if commands[2].DefaultMemberPermissions == nil || *commands[2].DefaultMemberPermissions != discordgo.PermissionAdministrator {
-		t.Fatal("/scan must default to administrator-only")
+		t.Fatal("/results must default to administrator-only")
 	}
 }
 

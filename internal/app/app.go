@@ -35,7 +35,7 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("initialize recon workflow: %w", err)
 	}
 
-	bot, err := discordbot.New(cfg.DiscordToken, cfg.DiscordGuildID, finder, workflow)
+	bot, err := discordbot.New(cfg.DiscordToken, cfg.DiscordGuildID, workflow)
 	if err != nil {
 		return err
 	}

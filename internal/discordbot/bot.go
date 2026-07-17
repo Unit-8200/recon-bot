@@ -11,32 +11,24 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// SubdomainFinder is the capability needed by the /subs command.
-type SubdomainFinder interface {
-	Enumerate(ctx context.Context, rootDomain string) ([]string, error)
-}
-
 // ReconRunner is the complete passive-enumeration and HTTP-probing workflow.
 type ReconRunner interface {
 	Run(ctx context.Context, rootDomain string) (recon.Result, error)
+	Latest(rootDomain string) (recon.Result, error)
 }
 
 // Bot manages a Discord session and its commands.
 type Bot struct {
 	session    *discordgo.Session
 	guildID    string
-	finder     SubdomainFinder
 	recon      ReconRunner
 	runContext context.Context
 }
 
 // New constructs a Discord bot without opening its network connection.
-func New(token, guildID string, finder SubdomainFinder, reconRunner ReconRunner) (*Bot, error) {
+func New(token, guildID string, reconRunner ReconRunner) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("Discord token is required")
-	}
-	if finder == nil {
-		return nil, fmt.Errorf("subdomain finder is required")
 	}
 	if reconRunner == nil {
 		return nil, fmt.Errorf("recon runner is required")
@@ -48,7 +40,7 @@ func New(token, guildID string, finder SubdomainFinder, reconRunner ReconRunner)
 	}
 	session.Identify.Intents = discordgo.IntentsGuilds
 
-	bot := &Bot{session: session, guildID: guildID, finder: finder, recon: reconRunner}
+	bot := &Bot{session: session, guildID: guildID, recon: reconRunner}
 	session.AddHandler(bot.readyHandler)
 	session.AddHandler(bot.interactionHandler)
 
@@ -94,9 +86,9 @@ func (b *Bot) interactionHandler(session *discordgo.Session, event *discordgo.In
 	switch event.ApplicationCommandData().Name {
 	case "ping":
 		b.handlePing(session, event)
-	case "subs":
-		b.handleSubs(session, event)
 	case "scan":
 		b.handleScan(session, event)
+	case "results":
+		b.handleResults(session, event)
 	}
 }
