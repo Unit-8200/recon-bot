@@ -30,7 +30,7 @@ go run .
 
 In your Discord test server, enter `/ping`, `/scan domain:example.com`, or `/results domain:example.com`. Only server administrators can use the discovery commands, and you should only scan domains you own or are authorized to assess. Stop the bot with `Ctrl+C`.
 
-`/scan` acknowledges immediately, runs in the background without an interaction timeout, and posts `httpx_results.txt` in the channel when finished. It first runs consolidated passive discovery and then probes every discovered name on ports `80`, `443`, `8443`, `8444`, `8080`, `3000`, and `5000`, with 15 HTTPX workers. HTTPX uses its normal HTTP/HTTPS fallback behavior, so it keeps one endpoint result per responsive host/port instead of emitting both schemes. Each run also creates:
+`/scan` acknowledges immediately, runs in the background without an interaction timeout, and sends `httpx_results.txt` to the channel or your DMs when finished. It first runs consolidated passive discovery and then probes every discovered name on ports `80`, `443`, `8443`, `8444`, `8080`, `3000`, and `5000`, with 15 HTTPX workers. HTTPX uses its normal HTTP/HTTPS fallback behavior, so it keeps one endpoint result per responsive host/port instead of emitting both schemes. Each run also creates:
 
 ```text
 results/20260717T153628.000Z_example.com/

@@ -13,6 +13,8 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+const privateDeliveryCode int64 = 999
+
 func commandDefinitions() []*discordgo.ApplicationCommand {
 	adminPermissions := int64(discordgo.PermissionAdministrator)
 	guildContexts := []discordgo.InteractionContextType{discordgo.InteractionContextGuild}
@@ -33,6 +35,12 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 					Name:        "domain",
 					Description: "Authorized root domain, for example example.com",
 					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionInteger,
+					Name:        "code",
+					Description: "Optional scan code",
+					Required:    false,
 				},
 			},
 		},
@@ -75,8 +83,13 @@ func (b *Bot) handleScan(session *discordgo.Session, event *discordgo.Interactio
 		}
 		return
 	}
+	private := integerOption(event.ApplicationCommandData().Options, "code") == privateDeliveryCode
 
-	acknowledgement := fmt.Sprintf("Scan started for `%s`. The HTTPX results will be posted in this channel when it finishes.", domain)
+	destination := "this channel"
+	if private {
+		destination = "your DMs"
+	}
+	acknowledgement := fmt.Sprintf("Scan started for `%s`. The HTTPX results will be sent to %s when it finishes.", domain, destination)
 	if err := respond(session, event, acknowledgement, true); err != nil {
 		log.Printf("acknowledge /scan: %v", err)
 		return
@@ -88,10 +101,24 @@ func (b *Bot) handleScan(session *discordgo.Session, event *discordgo.Interactio
 	}
 	channelID := event.ChannelID
 	userID := event.Member.User.ID
-	go b.runScan(parent, session, channelID, userID, domain)
+	go b.runScan(parent, session, channelID, userID, domain, private)
 }
 
-func (b *Bot) runScan(ctx context.Context, session *discordgo.Session, channelID, userID, domain string) {
+func (b *Bot) runScan(ctx context.Context, session *discordgo.Session, channelID, userID, domain string, private bool) {
+	deliveryChannelID := channelID
+	if private {
+		directMessage, dmErr := session.UserChannelCreate(userID)
+		if dmErr != nil {
+			log.Printf("open DM for /scan requester %s: %v", userID, dmErr)
+			failure := fmt.Sprintf("<@%s> I couldn't open your DMs, so the private scan was not started.", userID)
+			if _, sendErr := session.ChannelMessageSend(channelID, failure); sendErr != nil {
+				log.Printf("report private /scan delivery failure: %v", sendErr)
+			}
+			return
+		}
+		deliveryChannelID = directMessage.ID
+	}
+
 	result, err := b.recon.Run(ctx, domain)
 	if ctx.Err() != nil {
 		log.Printf("scan for %q stopped during bot shutdown: %v", domain, ctx.Err())
@@ -103,26 +130,35 @@ func (b *Bot) runScan(ctx context.Context, session *discordgo.Session, channelID
 		if result.Directory != "" {
 			content = fmt.Sprintf("<@%s> scan stopped for `%s`. Partial artifacts were saved in `%s`.", userID, domain, result.Directory)
 		}
-		if _, sendErr := session.ChannelMessageSend(channelID, content); sendErr != nil {
+		if private {
+			content = fmt.Sprintf("Scan failed for `%s`. Review the bot logs.", domain)
+			if result.Directory != "" {
+				content = fmt.Sprintf("Scan stopped for `%s`. Partial artifacts were saved in `%s`.", domain, result.Directory)
+			}
+		}
+		if _, sendErr := session.ChannelMessageSend(deliveryChannelID, content); sendErr != nil {
 			log.Printf("report /scan failure: %v", sendErr)
 		}
 		return
 	}
 
 	content := fmt.Sprintf("<@%s> scan complete for `%s`.", userID, result.Domain)
+	if private {
+		content = fmt.Sprintf("Scan complete for `%s`.", result.Domain)
+	}
 
 	httpxFile, err := os.Open(result.HTTPXFile)
 	if err != nil {
 		log.Printf("open HTTPX results for %q: %v", domain, err)
 		content += fmt.Sprintf(" The attachment could not be opened; local artifacts: `%s`.", result.Directory)
-		if _, sendErr := session.ChannelMessageSend(channelID, content); sendErr != nil {
+		if _, sendErr := session.ChannelMessageSend(deliveryChannelID, content); sendErr != nil {
 			log.Printf("report /scan attachment failure: %v", sendErr)
 		}
 		return
 	}
 	defer httpxFile.Close()
 
-	if _, err := session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+	if _, err := session.ChannelMessageSendComplex(deliveryChannelID, &discordgo.MessageSend{
 		Content: content,
 		Files: []*discordgo.File{
 			{Name: "httpx_results.txt", ContentType: "text/plain; charset=utf-8", Reader: httpxFile},
@@ -130,7 +166,7 @@ func (b *Bot) runScan(ctx context.Context, session *discordgo.Session, channelID
 	}); err != nil {
 		log.Printf("publish /scan results for %q: %v", domain, err)
 		fallback := fmt.Sprintf("<@%s> scan completed for `%s`, but Discord rejected the HTTPX attachment. Local artifacts: `%s`.", userID, result.Domain, result.Directory)
-		if _, sendErr := session.ChannelMessageSend(channelID, fallback); sendErr != nil {
+		if _, sendErr := session.ChannelMessageSend(deliveryChannelID, fallback); sendErr != nil {
 			log.Printf("report /scan publish failure: %v", sendErr)
 		}
 	}
@@ -214,4 +250,13 @@ func stringOption(options []*discordgo.ApplicationCommandInteractionDataOption, 
 		}
 	}
 	return "", false
+}
+
+func integerOption(options []*discordgo.ApplicationCommandInteractionDataOption, name string) int64 {
+	for _, option := range options {
+		if option.Name == name && option.Type == discordgo.ApplicationCommandOptionInteger {
+			return option.IntValue()
+		}
+	}
+	return 0
 }
