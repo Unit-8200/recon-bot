@@ -3,3 +3,4 @@ discord-bot
 *.log
 /secrets/
 /results/
+/data/puredns/

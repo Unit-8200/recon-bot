@@ -34,7 +34,9 @@ func NormalizeRootDomain(value string) (string, error) {
 	return asciiDomain, nil
 }
 
-func normalizeCandidate(value, rootDomain string) (string, bool) {
+// NormalizeCandidate validates and canonicalizes a discovered subdomain within
+// rootDomain. The root itself and out-of-scope names are rejected.
+func NormalizeCandidate(value, rootDomain string) (string, bool) {
 	candidate := strings.ToLower(strings.Trim(strings.TrimSpace(value), "."))
 	candidate = strings.TrimPrefix(candidate, "*.")
 	if candidate == "" || candidate == rootDomain || !strings.HasSuffix(candidate, "."+rootDomain) {

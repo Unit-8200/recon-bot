@@ -5,6 +5,8 @@ go 1.26
 require (
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/joho/godotenv v1.5.1
+	github.com/miekg/dns v1.1.68
+	github.com/projectdiscovery/dnsx v1.2.3
 	github.com/projectdiscovery/goflags v0.1.74
 	github.com/projectdiscovery/httpx v1.7.2
 	github.com/projectdiscovery/subfinder/v2 v2.14.0
@@ -87,7 +89,6 @@ require (
 	github.com/mfonda/simhash v0.0.0-20151007195837-79f94a1100d6 // indirect
 	github.com/mholt/archives v0.1.5 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
-	github.com/miekg/dns v1.1.68 // indirect
 	github.com/mikelolasagasti/xz v1.0.1 // indirect
 	github.com/minio/minlz v1.0.1 // indirect
 	github.com/minio/selfupdate v0.6.1-0.20230907112617-f11e74f84ca7 // indirect
@@ -105,7 +106,6 @@ require (
 	github.com/projectdiscovery/cdncheck v1.2.32 // indirect
 	github.com/projectdiscovery/chaos-client v0.5.2 // indirect
 	github.com/projectdiscovery/clistats v0.1.1 // indirect
-	github.com/projectdiscovery/dnsx v1.2.3 // indirect
 	github.com/projectdiscovery/dsl v0.8.4 // indirect
 	github.com/projectdiscovery/fastdialer v0.5.6 // indirect
 	github.com/projectdiscovery/fdmax v0.0.4 // indirect

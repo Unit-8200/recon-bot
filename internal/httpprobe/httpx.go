@@ -19,13 +19,11 @@ const userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, li
 
 var probePorts = []string{"80", "443", "8443", "8444", "8080", "3000", "5000"}
 
-// HTTPX stores custom ports in package-global state, so every embedded run in
-// this process must share one gate even if more than one Prober is constructed.
-var probeGate = func() chan struct{} {
-	gate := make(chan struct{}, 1)
-	gate <- struct{}{}
-	return gate
-}()
+var (
+	portsOnce       sync.Once
+	configuredPorts customport.CustomPorts
+	configureErr    error
+)
 
 // Result is the persisted subset of HTTPX metadata requested by the workflow.
 type Result struct {
@@ -52,18 +50,21 @@ type Result struct {
 	Error         string    `json:"error,omitempty"`
 }
 
-// Prober serializes HTTPX runs because its custom-port registry is process-global.
+// Prober runs an independent HTTPX runner with immutable process-wide ports.
 type Prober struct {
 	ports customport.CustomPorts
 }
 
 // New creates a prober with the workflow's fixed port set.
 func New() (*Prober, error) {
-	var ports customport.CustomPorts
-	if err := ports.Set(strings.Join(probePorts, ",")); err != nil {
-		return nil, fmt.Errorf("configure HTTPX ports: %w", err)
+	portsOnce.Do(func() {
+		configureErr = configuredPorts.Set(strings.Join(probePorts, ","))
+	})
+	if configureErr != nil {
+		return nil, fmt.Errorf("configure HTTPX ports: %w", configureErr)
 	}
 
+	ports := append(customport.CustomPorts(nil), configuredPorts...)
 	return &Prober{ports: ports}, nil
 }
 
@@ -74,13 +75,6 @@ func (p *Prober) Probe(ctx context.Context, targets []string) ([]Result, error) 
 	}
 	if len(targets) == 0 {
 		return []Result{}, nil
-	}
-
-	select {
-	case <-probeGate:
-		defer func() { probeGate <- struct{}{} }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
 
 	var resultMutex sync.Mutex
@@ -126,7 +120,36 @@ func (p *Prober) Probe(ctx context.Context, targets []string) ([]Result, error) 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return results, nil
+	return preferPort443(results), nil
+}
+
+// preferPort443 removes a host's port 80 result when that same host has a
+// successful port 443 result. Results from all other configured ports remain.
+func preferPort443(results []Result) []Result {
+	hasPort443 := make(map[string]struct{})
+	for _, result := range results {
+		if result.Port == "443" && result.Error == "" && result.URL != "" {
+			hasPort443[resultKey(result)] = struct{}{}
+		}
+	}
+
+	filtered := make([]Result, 0, len(results))
+	for _, result := range results {
+		if result.Port == "80" {
+			if _, exists := hasPort443[resultKey(result)]; exists {
+				continue
+			}
+		}
+		filtered = append(filtered, result)
+	}
+	return filtered
+}
+
+func resultKey(result Result) string {
+	if input := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(result.Input), ".")); input != "" {
+		return input
+	}
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(result.Host), "."))
 }
 
 func (p *Prober) options(targets []string, callback runner.OnResultCallback) runner.Options {

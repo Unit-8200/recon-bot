@@ -5,19 +5,22 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/projectdiscovery/subfinder/v2/pkg/runner"
 )
 
-// Source wraps a Subfinder runner. Calls are serialized because the upstream
-// runner maintains source statistics and rate-limit state.
+// Source creates an independent Subfinder runner for each enumeration.
 type Source struct {
-	runner *runner.Runner
-	gate   chan struct{}
+	providerConfig string
 }
 
 // New creates a Subfinder source configured to query every available source.
 func New(providerConfig string) (*Source, error) {
+	return &Source{providerConfig: strings.TrimSpace(providerConfig)}, nil
+}
+
+func (s *Source) newRunner() (*runner.Runner, error) {
 	instance, err := runner.NewRunner(&runner.Options{
 		Threads:            10,
 		Timeout:            30,
@@ -25,15 +28,13 @@ func New(providerConfig string) (*Source, error) {
 		Silent:             true,
 		DisableUpdateCheck: true,
 		All:                true,
-		ProviderConfig:     providerConfig,
+		ProviderConfig:     s.providerConfig,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create subfinder runner: %w", err)
 	}
 
-	gate := make(chan struct{}, 1)
-	gate <- struct{}{}
-	return &Source{runner: instance, gate: gate}, nil
+	return instance, nil
 }
 
 // Name identifies this source in logs.
@@ -41,14 +42,12 @@ func (*Source) Name() string { return "subfinder" }
 
 // Enumerate returns Subfinder's unique candidates for domain.
 func (s *Source) Enumerate(ctx context.Context, domain string) ([]string, error) {
-	select {
-	case <-s.gate:
-		defer func() { s.gate <- struct{}{} }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	instance, err := s.newRunner()
+	if err != nil {
+		return nil, err
 	}
 
-	sourceMap, err := s.runner.EnumerateSingleDomainWithCtx(ctx, domain, []io.Writer{io.Discard})
+	sourceMap, err := instance.EnumerateSingleDomainWithCtx(ctx, domain, []io.Writer{io.Discard})
 	if err != nil {
 		return nil, fmt.Errorf("enumerate: %w", err)
 	}

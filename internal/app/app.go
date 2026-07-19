@@ -7,6 +7,8 @@ import (
 
 	"discord-bot/internal/config"
 	"discord-bot/internal/discordbot"
+	"discord-bot/internal/dnsbruteforce"
+	"discord-bot/internal/dnsvalidate"
 	"discord-bot/internal/httpprobe"
 	"discord-bot/internal/recon"
 	"discord-bot/internal/subdomains"
@@ -30,7 +32,26 @@ func Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("initialize HTTPX: %w", err)
 	}
-	workflow, err := recon.New(cfg.ResultsDirectory, finder, prober)
+	validator, err := dnsvalidate.New()
+	if err != nil {
+		return fmt.Errorf("initialize DNSX: %w", err)
+	}
+	reconOptions := make([]recon.Option, 0, 1)
+	if cfg.PureDNSEnabled {
+		bruteforcer, pureDNSErr := dnsbruteforce.NewPureDNS(dnsbruteforce.Options{
+			Image:     cfg.PureDNSImage,
+			Wordlist:  cfg.PureDNSWordlist,
+			Resolvers: cfg.PureDNSResolvers,
+			RateLimit: cfg.PureDNSRateLimit,
+			Timeout:   cfg.PureDNSTimeout,
+		})
+		if pureDNSErr != nil {
+			return fmt.Errorf("initialize PureDNS: %w", pureDNSErr)
+		}
+		reconOptions = append(reconOptions, recon.WithBruteforcer(bruteforcer, cfg.PureDNSPassiveThreshold))
+	}
+
+	workflow, err := recon.New(cfg.ResultsDirectory, finder, validator, prober, reconOptions...)
 	if err != nil {
 		return fmt.Errorf("initialize recon workflow: %w", err)
 	}

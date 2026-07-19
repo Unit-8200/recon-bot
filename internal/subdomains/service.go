@@ -108,7 +108,7 @@ func (f *Finder) Enumerate(ctx context.Context, rootDomain string) ([]string, er
 		}
 		successfulSources++
 		for _, candidate := range result.candidates {
-			if normalized, ok := normalizeCandidate(candidate, domain); ok {
+			if normalized, ok := NormalizeCandidate(candidate, domain); ok {
 				unique[normalized] = struct{}{}
 			}
 		}

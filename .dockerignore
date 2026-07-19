@@ -1,0 +1,9 @@
+.git
+.env
+data
+results
+secrets
+subfinder.yaml
+github-subdomains
+shosubgo
+

@@ -44,3 +44,26 @@ func TestSplitOutputLinesPreservesResultAlignment(t *testing.T) {
 		t.Fatalf("splitOutputLines() = %#v, want %#v", got, want)
 	}
 }
+
+func TestPreferPort443SuppressesOnlyMatchingPort80Result(t *testing.T) {
+	results := []Result{
+		{Input: "secure.example.com", Port: "80", URL: "http://secure.example.com"},
+		{Input: "secure.example.com", Port: "443", URL: "https://secure.example.com"},
+		{Input: "secure.example.com", Port: "8080", URL: "http://secure.example.com:8080"},
+		{Input: "http-only.example.com", Port: "80", URL: "http://http-only.example.com"},
+		{Input: "broken-tls.example.com", Port: "80", URL: "http://broken-tls.example.com"},
+		{Input: "broken-tls.example.com", Port: "443", Error: "connection refused"},
+	}
+
+	got := preferPort443(results)
+	want := []Result{
+		{Input: "secure.example.com", Port: "443", URL: "https://secure.example.com"},
+		{Input: "secure.example.com", Port: "8080", URL: "http://secure.example.com:8080"},
+		{Input: "http-only.example.com", Port: "80", URL: "http://http-only.example.com"},
+		{Input: "broken-tls.example.com", Port: "80", URL: "http://broken-tls.example.com"},
+		{Input: "broken-tls.example.com", Port: "443", Error: "connection refused"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("preferPort443() = %#v, want %#v", got, want)
+	}
+}
