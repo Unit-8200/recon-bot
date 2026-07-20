@@ -24,6 +24,7 @@ const (
 	PureDNSFilename    = "puredns_subdomains.txt"
 	ResolvedFilename   = "resolved_subdomains.txt"
 	HTTPXFilename      = "httpx_results.txt"
+	DomainsFilename    = "domains.txt"
 	maxConcurrentScans = 2
 )
 
@@ -305,6 +306,37 @@ func (s *Service) Results(query string) ([]Result, error) {
 		return nil, fmt.Errorf("%w for %s", ErrResultsNotFound, query)
 	}
 	return results, nil
+}
+
+// Domains returns every unique root domain represented in the saved scan history.
+func (s *Service) Domains() ([]string, error) {
+	entries, err := os.ReadDir(s.outputRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrResultsNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read results directory: %w", err)
+	}
+
+	unique := make(map[string]struct{})
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if domain, ok := runDirectoryDomain(entry.Name()); ok {
+			unique[domain] = struct{}{}
+		}
+	}
+	if len(unique) == 0 {
+		return nil, ErrResultsNotFound
+	}
+
+	domains := make([]string, 0, len(unique))
+	for domain := range unique {
+		domains = append(domains, domain)
+	}
+	sort.Strings(domains)
+	return domains, nil
 }
 
 func scopedDomains(values []string, rootDomain string) []string {

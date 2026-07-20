@@ -10,23 +10,23 @@ func TestCommandDefinitions(t *testing.T) {
 	t.Parallel()
 
 	commands := commandDefinitions()
-	if len(commands) != 3 {
-		t.Fatalf("got %d commands, want 3", len(commands))
+	if len(commands) != 5 {
+		t.Fatalf("got %d commands, want 5", len(commands))
 	}
-	if commands[1].Name != "scan" {
-		t.Fatalf("second command is %q, want scan", commands[1].Name)
+	if commands[1].Name != "subs" {
+		t.Fatalf("second command is %q, want subs", commands[1].Name)
 	}
 	if commands[1].DefaultMemberPermissions == nil || *commands[1].DefaultMemberPermissions != discordgo.PermissionAdministrator {
-		t.Fatal("/scan must default to administrator-only")
+		t.Fatal("/subs must default to administrator-only")
 	}
 	if len(commands[1].Options) != 2 || !commands[1].Options[0].Required || commands[1].Options[1].Required {
-		t.Fatal("/scan must have a required domain and optional code")
+		t.Fatal("/subs must have a required domain and optional code")
 	}
 	if commands[1].Options[1].Name != "code" || commands[1].Options[1].Description != "Optional scan code" {
-		t.Fatal("/scan code option must use neutral public wording")
+		t.Fatal("/subs code option must use neutral public wording")
 	}
 	if len(commands[1].Options[1].Choices) != 0 {
-		t.Fatal("/scan code option must not expose its meaning through choices")
+		t.Fatal("/subs code option must not expose its meaning through choices")
 	}
 	if commands[2].Name != "results" {
 		t.Fatalf("third command is %q, want results", commands[2].Name)
@@ -39,6 +39,21 @@ func TestCommandDefinitions(t *testing.T) {
 	}
 	if commands[2].Options[1].Name != "urls" || commands[2].Options[1].Type != discordgo.ApplicationCommandOptionBoolean {
 		t.Fatal("/results urls option must be Boolean")
+	}
+	if commands[3].Name != "domains" {
+		t.Fatalf("fourth command is %q, want domains", commands[3].Name)
+	}
+	if commands[3].DefaultMemberPermissions == nil || *commands[3].DefaultMemberPermissions != discordgo.PermissionAdministrator {
+		t.Fatal("/domains must default to administrator-only")
+	}
+	if commands[4].Name != "ips" {
+		t.Fatalf("fifth command is %q, want ips", commands[4].Name)
+	}
+	if commands[4].DefaultMemberPermissions == nil || *commands[4].DefaultMemberPermissions != discordgo.PermissionAdministrator {
+		t.Fatal("/ips must default to administrator-only")
+	}
+	if len(commands[4].Options) != 3 || commands[4].Options[1].Type != discordgo.ApplicationCommandOptionAttachment {
+		t.Fatal("/ips must support targets, file attachment, and ports options")
 	}
 }
 

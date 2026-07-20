@@ -138,6 +138,48 @@ func TestResultsSupportsAllAndWildcardQueries(t *testing.T) {
 	}
 }
 
+func TestDomainsReturnsUniqueSortedScanHistory(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	service, err := New(root, fakeEnumerator{}, fakeValidator{}, fakeProber{})
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+
+	for _, directory := range []string{
+		"20260717T120000.000Z_zeta.com",
+		"20260717T130000.000Z_example.com",
+		"20260717T140000.000Z_example.com_1",
+		"not-a-scan-directory",
+	} {
+		if err := os.Mkdir(filepath.Join(root, directory), 0o750); err != nil {
+			t.Fatalf("Mkdir(%q): %v", directory, err)
+		}
+	}
+
+	got, err := service.Domains()
+	if err != nil {
+		t.Fatalf("Domains(): %v", err)
+	}
+	want := []string{"example.com", "zeta.com"}
+	if !equalStrings(got, want) {
+		t.Fatalf("Domains() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDomainsReturnsNotFoundForEmptyHistory(t *testing.T) {
+	t.Parallel()
+
+	service, err := New(t.TempDir(), fakeEnumerator{}, fakeValidator{}, fakeProber{})
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	if _, err := service.Domains(); !errors.Is(err, ErrResultsNotFound) {
+		t.Fatalf("Domains() error = %v, want ErrResultsNotFound", err)
+	}
+}
+
 type fakeProber struct {
 	values  []httpprobe.Result
 	targets *[]string

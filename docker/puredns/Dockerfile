@@ -7,6 +7,16 @@ RUN git clone --depth 1 --branch "${PUREDNS_VERSION}" \
 WORKDIR /src/puredns
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/puredns .
 
+FROM golang:1.24-bookworm AS caduceus-builder
+
+ARG CADUCEUS_VERSION=v1.0.5
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y gcc \
+    && rm -rf /var/lib/apt/lists/*
+RUN CGO_ENABLED=1 GOBIN=/out go install \
+    github.com/g0ldencybersec/Caduceus/cmd/caduceus@${CADUCEUS_VERSION}
+
 FROM debian:bookworm AS massdns-builder
 
 ARG MASSDNS_VERSION=v1.1.0
@@ -28,6 +38,7 @@ RUN apt-get update \
 
 COPY --from=puredns-builder /out/puredns /usr/local/bin/puredns
 COPY --from=massdns-builder /src/massdns/bin/massdns /usr/local/bin/massdns
+COPY --from=caduceus-builder /out/caduceus /usr/local/bin/caduceus
 
 USER puredns
 WORKDIR /work

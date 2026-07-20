@@ -10,6 +10,7 @@ import (
 	"discord-bot/internal/dnsbruteforce"
 	"discord-bot/internal/dnsvalidate"
 	"discord-bot/internal/httpprobe"
+	"discord-bot/internal/ipscan"
 	"discord-bot/internal/recon"
 	"discord-bot/internal/subdomains"
 )
@@ -55,8 +56,16 @@ func Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("initialize recon workflow: %w", err)
 	}
+	ipScanner, err := ipscan.NewCaduceus(ipscan.Options{
+		Image:      cfg.CaduceusImage,
+		OutputRoot: cfg.ResultsDirectory,
+		Timeout:    cfg.CaduceusTimeout,
+	})
+	if err != nil {
+		return fmt.Errorf("initialize Caduceus: %w", err)
+	}
 
-	bot, err := discordbot.New(cfg.DiscordToken, cfg.DiscordGuildID, workflow)
+	bot, err := discordbot.New(cfg.DiscordToken, cfg.DiscordGuildID, workflow, ipScanner)
 	if err != nil {
 		return err
 	}

@@ -35,6 +35,7 @@ if [ ! -s "$resolvers" ]; then
 fi
 
 docker build --tag "$image" --file "$project_dir/docker/puredns/Dockerfile" "$project_dir"
+docker run --rm --entrypoint caduceus "$image" -h >/dev/null 2>&1
 
-printf 'PureDNS is ready. Add PUREDNS_ENABLED=true to .env and restart the bot.\n'
+printf 'PureDNS and Caduceus are ready. Add PUREDNS_ENABLED=true to .env and restart the bot.\n'
 printf 'Image: %s\nWordlist: %s\nResolvers: %s\n' "$image" "$wordlist" "$resolvers"

@@ -1,6 +1,6 @@
 # Discord bot in Go
 
-A Discord bot built with [DiscordGo](https://github.com/bwmarrin/discordgo), Subfinder, and HTTPX. It provides `/ping` plus administrator-only `/scan` and `/results` commands.
+A Discord bot built with [DiscordGo](https://github.com/bwmarrin/discordgo), Subfinder, HTTPX, and Caduceus. It provides `/ping` plus administrator-only `/subs`, `/ips`, `/results`, and `/domains` commands.
 
 ## 1. Create the Discord application
 
@@ -19,7 +19,7 @@ The bot loads `.env` automatically during local development. Environment variabl
 
 `DISCORD_GUILD_ID` is optional, but guild commands appear immediately and are best during development. If omitted, commands are registered globally and may take longer to appear.
 
-The bot consolidates passive results from Subfinder, Shosubgo/Shodan, and GitHub Subdomains. Subfinder always runs with every source (`subfinder -all`). Set `SUBFINDER_PROVIDER_CONFIG` to your provider key YAML; its `github` and `shodan` entries enable the additional adapters. Without those keys, the corresponding adapters are skipped. `RESULTS_DIR` controls where `/scan` artifacts are written and defaults to `results`.
+The bot consolidates passive results from Subfinder, Shosubgo/Shodan, and GitHub Subdomains. Subfinder always runs with every source (`subfinder -all`). Set `SUBFINDER_PROVIDER_CONFIG` to your provider key YAML; its `github` and `shodan` entries enable the additional adapters. Without those keys, the corresponding adapters are skipped. `RESULTS_DIR` controls where `/subs` and `/ips` artifacts are written and defaults to `results`.
 
 ### Optional PureDNS brute forcing
 
@@ -41,7 +41,36 @@ docker run --rm \
   --resolvers /data/resolvers.txt --wildcard-batch 1000000 --rate-limit 5000 --quiet
 ```
 
-Use only against domains you are authorized to test. Public resolvers change over time; curate your own resolver file when reliability matters and choose a responsible rate limit.
+The same image includes Caduceus v1.0.5, built with CGO and GCC. PureDNS remains the default entrypoint for bot compatibility, so invoke Caduceus explicitly:
+
+```sh
+docker run --rm --entrypoint caduceus discord-puredns:2.1.1 -h
+docker run --rm --entrypoint caduceus discord-puredns:2.1.1 -i 192.0.2.10 -p 443
+```
+
+The `/ips` command runs Caduceus in the background. For a small input, pass comma- or space-separated IPv4 addresses and CIDRs directly:
+
+```text
+/ips targets:192.0.2.10,198.51.100.0/28 ports:443,8443
+```
+
+For large inputs, attach a text file with one IPv4 address or CIDR per line:
+
+```text
+/ips file:targets.txt ports:443,8443
+```
+
+Choose exactly one of `targets` and `file`. Attachments are limited to 8 MiB, validated before the job starts, and streamed to the container over stdin. Caduceus currently handles IPv4 targets; IPv6 input is rejected instead of being passed in a format the upstream tool cannot scan correctly. `/ips` publishes `caduceus_results.txt` when complete and saves each run under `RESULTS_DIR`. Only one Caduceus job runs at a time.
+
+```text
+results/20260720T153628.000Z_ips/
+├── ip_targets.txt
+└── caduceus_results.txt
+```
+
+If Caduceus fails after the run directory is created, `ip_targets.txt` remains as a partial artifact. IP scan directories are not included in `/results` or `/domains`.
+
+Use only against domains and address ranges you are authorized to test. Public resolvers change over time; curate your own resolver file when reliability matters and choose a responsible rate limit.
 
 ## 3. Run it
 
@@ -50,9 +79,9 @@ go mod tidy
 go run .
 ```
 
-In your Discord test server, enter `/ping`, `/scan domain:example.com`, or `/results domain:example.com`. Use `/results domain:example.com urls:true` to receive a `urls.txt` attachment containing only sorted, unique HTTP(S) URLs from the latest saved scan. `/results domain:*` combines every completed scan, while a wildcard such as `/results domain:*example.com` combines every completed scan whose root domain matches; either form can also use `urls:true`. Only server administrators can use the discovery commands, and you should only scan domains you own or are authorized to assess. Stop the bot with `Ctrl+C`.
+In your Discord test server, enter `/ping`, `/subs domain:example.com`, `/results domain:example.com`, or `/domains`. Use `/results domain:example.com urls:true` to receive a `urls.txt` attachment containing only sorted, unique HTTP(S) URLs from the latest saved scan. `/results domain:*` combines every completed scan, while a wildcard such as `/results domain:*example.com` combines every completed scan whose root domain matches; either form can also use `urls:true`. `/domains` publishes a unique, sorted list of all root domains represented in the saved scan history. Successful `/results` and `/domains` responses are visible to everyone in the channel. Only server administrators can use the discovery commands, and you should only scan domains and address ranges you own or are authorized to assess. Stop the bot with `Ctrl+C`.
 
-`/scan` acknowledges immediately, runs in the background without an interaction timeout, and sends `httpx_results.txt` to the channel or your DMs when finished. Up to two scans run concurrently. Each scan performs consolidated passive discovery, optionally adds PureDNS brute-force results when enabled and below the passive threshold, validates the merged names through DNSX with 50 workers, and sends only names with an A or AAAA record to HTTPX. HTTPX probes ports `80`, `443`, `8443`, `8444`, `8080`, `3000`, and `5000` with 20 workers and normal HTTP/HTTPS fallback behavior. When both ports 80 and 443 respond for the same hostname, only the port 443 result is retained; results from the other configured ports remain untouched. Each run also creates:
+`/subs` acknowledges immediately, runs in the background without an interaction timeout, and sends `httpx_results.txt` to the channel or your DMs when finished. Up to two scans run concurrently. Each scan performs consolidated passive discovery, optionally adds PureDNS brute-force results when enabled and below the passive threshold, validates the merged names through DNSX with 50 workers, and sends only names with an A or AAAA record to HTTPX. HTTPX probes ports `80`, `443`, `8443`, `8444`, `8080`, `3000`, and `5000` with 20 workers and normal HTTP/HTTPS fallback behavior. When both ports 80 and 443 respond for the same hostname, only the port 443 result is retained; results from the other configured ports remain untouched. Each run also creates:
 
 ```text
 results/20260717T153628.000Z_example.com/
@@ -78,6 +107,7 @@ The HTTPX file uses the familiar CLI-style format: one URL per line followed by 
 - `internal/subdomains/shosubgo` adapts Shodan's passive DNS-domain endpoint.
 - `internal/subdomains/github-subs` searches GitHub code and extracts subdomains.
 - `internal/httpprobe` adapts ProjectDiscovery HTTPX with the fixed probe profile.
+- `internal/ipscan` runs Docker-backed Caduceus scans for IPv4 addresses and CIDRs.
 - `internal/recon` orchestrates discovery, probing, and per-run artifact storage.
 - `.env.example` documents the required configuration.
 - `.gitignore` prevents your real token from being committed.

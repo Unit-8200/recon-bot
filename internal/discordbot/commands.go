@@ -25,7 +25,7 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 			Description: "Check whether the bot is online",
 		},
 		{
-			Name:                     "scan",
+			Name:                     "subs",
 			Description:              "Enumerate subdomains, probe web services, and save artifacts",
 			DefaultMemberPermissions: &adminPermissions,
 			Contexts:                 &guildContexts,
@@ -64,6 +64,38 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 				},
 			},
 		},
+		{
+			Name:                     "domains",
+			Description:              "List every root domain in the saved scan history",
+			DefaultMemberPermissions: &adminPermissions,
+			Contexts:                 &guildContexts,
+		},
+		{
+			Name:                     "ips",
+			Description:              "Extract certificate domains from IP addresses or CIDR ranges",
+			DefaultMemberPermissions: &adminPermissions,
+			Contexts:                 &guildContexts,
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "targets",
+					Description: "Comma or space separated IP addresses and CIDR ranges",
+					Required:    false,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionAttachment,
+					Name:        "file",
+					Description: "Text file containing one IP address or CIDR per line",
+					Required:    false,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "ports",
+					Description: "Comma-separated TLS ports; defaults to 443",
+					Required:    false,
+				},
+			},
+		},
 	}
 }
 
@@ -74,10 +106,10 @@ func (b *Bot) handlePing(session *discordgo.Session, event *discordgo.Interactio
 	}
 }
 
-func (b *Bot) handleScan(session *discordgo.Session, event *discordgo.InteractionCreate) {
+func (b *Bot) handleSubs(session *discordgo.Session, event *discordgo.InteractionCreate) {
 	if event.Member == nil || event.Member.User == nil || event.Member.Permissions&discordgo.PermissionAdministrator == 0 {
-		if err := respond(session, event, "Only server administrators can use `/scan`.", true); err != nil {
-			log.Printf("reject /scan: %v", err)
+		if err := respond(session, event, "Only server administrators can use `/subs`.", true); err != nil {
+			log.Printf("reject /subs: %v", err)
 		}
 		return
 	}
@@ -85,7 +117,7 @@ func (b *Bot) handleScan(session *discordgo.Session, event *discordgo.Interactio
 	domain, ok := stringOption(event.ApplicationCommandData().Options, "domain")
 	if !ok {
 		if err := respond(session, event, "The `domain` option is required.", true); err != nil {
-			log.Printf("validate /scan: %v", err)
+			log.Printf("validate /subs: %v", err)
 		}
 		return
 	}
@@ -97,7 +129,7 @@ func (b *Bot) handleScan(session *discordgo.Session, event *discordgo.Interactio
 	}
 	acknowledgement := fmt.Sprintf("Scan started for `%s`. The HTTPX results will be sent to %s when it finishes.", domain, destination)
 	if err := respond(session, event, acknowledgement, true); err != nil {
-		log.Printf("acknowledge /scan: %v", err)
+		log.Printf("acknowledge /subs: %v", err)
 		return
 	}
 
@@ -107,18 +139,18 @@ func (b *Bot) handleScan(session *discordgo.Session, event *discordgo.Interactio
 	}
 	channelID := event.ChannelID
 	userID := event.Member.User.ID
-	go b.runScan(parent, session, channelID, userID, domain, private)
+	go b.runSubs(parent, session, channelID, userID, domain, private)
 }
 
-func (b *Bot) runScan(ctx context.Context, session *discordgo.Session, channelID, userID, domain string, private bool) {
+func (b *Bot) runSubs(ctx context.Context, session *discordgo.Session, channelID, userID, domain string, private bool) {
 	deliveryChannelID := channelID
 	if private {
 		directMessage, dmErr := session.UserChannelCreate(userID)
 		if dmErr != nil {
-			log.Printf("open DM for /scan requester %s: %v", userID, dmErr)
+			log.Printf("open DM for /subs requester %s: %v", userID, dmErr)
 			failure := fmt.Sprintf("<@%s> I couldn't open your DMs, so the private scan was not started.", userID)
 			if _, sendErr := session.ChannelMessageSend(channelID, failure); sendErr != nil {
-				log.Printf("report private /scan delivery failure: %v", sendErr)
+				log.Printf("report private /subs delivery failure: %v", sendErr)
 			}
 			return
 		}
@@ -143,7 +175,7 @@ func (b *Bot) runScan(ctx context.Context, session *discordgo.Session, channelID
 			}
 		}
 		if _, sendErr := session.ChannelMessageSend(deliveryChannelID, content); sendErr != nil {
-			log.Printf("report /scan failure: %v", sendErr)
+			log.Printf("report /subs failure: %v", sendErr)
 		}
 		return
 	}
@@ -158,7 +190,7 @@ func (b *Bot) runScan(ctx context.Context, session *discordgo.Session, channelID
 		log.Printf("open HTTPX results for %q: %v", domain, err)
 		content += fmt.Sprintf(" The attachment could not be opened; local artifacts: `%s`.", result.Directory)
 		if _, sendErr := session.ChannelMessageSend(deliveryChannelID, content); sendErr != nil {
-			log.Printf("report /scan attachment failure: %v", sendErr)
+			log.Printf("report /subs attachment failure: %v", sendErr)
 		}
 		return
 	}
@@ -170,10 +202,10 @@ func (b *Bot) runScan(ctx context.Context, session *discordgo.Session, channelID
 			{Name: "httpx_results.txt", ContentType: "text/plain; charset=utf-8", Reader: httpxFile},
 		},
 	}); err != nil {
-		log.Printf("publish /scan results for %q: %v", domain, err)
+		log.Printf("publish /subs results for %q: %v", domain, err)
 		fallback := fmt.Sprintf("<@%s> scan completed for `%s`, but Discord rejected the HTTPX attachment. Local artifacts: `%s`.", userID, result.Domain, result.Directory)
 		if _, sendErr := session.ChannelMessageSend(deliveryChannelID, fallback); sendErr != nil {
-			log.Printf("report /scan publish failure: %v", sendErr)
+			log.Printf("report /subs publish failure: %v", sendErr)
 		}
 	}
 }
@@ -197,7 +229,7 @@ func (b *Bot) handleResults(session *discordgo.Session, event *discordgo.Interac
 
 	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{Flags: discordgo.MessageFlagsEphemeral},
+		Data: &discordgo.InteractionResponseData{},
 	}); err != nil {
 		log.Printf("defer /results response: %v", err)
 		return
@@ -265,6 +297,48 @@ func (b *Bot) handleResults(session *discordgo.Session, event *discordgo.Interac
 		},
 	}); err != nil {
 		log.Printf("send /results for %q: %v", domain, err)
+	}
+}
+
+func (b *Bot) handleDomains(session *discordgo.Session, event *discordgo.InteractionCreate) {
+	if event.Member == nil || event.Member.User == nil || event.Member.Permissions&discordgo.PermissionAdministrator == 0 {
+		if err := respond(session, event, "Only server administrators can use `/domains`.", true); err != nil {
+			log.Printf("reject /domains: %v", err)
+		}
+		return
+	}
+
+	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{},
+	}); err != nil {
+		log.Printf("defer /domains response: %v", err)
+		return
+	}
+
+	domains, err := b.recon.Domains()
+	if err != nil {
+		content := "Could not read the scan history. Review the bot logs."
+		if errors.Is(err, recon.ErrResultsNotFound) {
+			content = "No saved scan history was found."
+		} else {
+			log.Printf("list /domains: %v", err)
+		}
+		if _, editErr := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &content}); editErr != nil {
+			log.Printf("report /domains failure: %v", editErr)
+		}
+		return
+	}
+
+	contents := strings.Join(domains, "\n") + "\n"
+	content := "Saved scan root domains."
+	if _, err := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{
+		Content: &content,
+		Files: []*discordgo.File{
+			{Name: recon.DomainsFilename, ContentType: "text/plain; charset=utf-8", Reader: strings.NewReader(contents)},
+		},
+	}); err != nil {
+		log.Printf("send /domains: %v", err)
 	}
 }
 

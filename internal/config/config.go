@@ -25,6 +25,8 @@ type Config struct {
 	PureDNSPassiveThreshold int
 	PureDNSRateLimit        int
 	PureDNSTimeout          time.Duration
+	CaduceusImage           string
+	CaduceusTimeout         time.Duration
 }
 
 // Load reads an optional local .env file and then loads configuration from the
@@ -50,6 +52,11 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	caduceusTimeout, err := parseDuration("CADUCEUS_TIMEOUT", 4*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	pureDNSImage := envOrDefault("PUREDNS_IMAGE", "discord-puredns:2.1.1")
 
 	config := Config{
 		DiscordToken:            strings.TrimSpace(os.Getenv("DISCORD_TOKEN")),
@@ -57,12 +64,14 @@ func Load() (Config, error) {
 		SubfinderProviderConfig: strings.TrimSpace(os.Getenv("SUBFINDER_PROVIDER_CONFIG")),
 		ResultsDirectory:        strings.TrimSpace(os.Getenv("RESULTS_DIR")),
 		PureDNSEnabled:          pureDNSEnabled,
-		PureDNSImage:            envOrDefault("PUREDNS_IMAGE", "discord-puredns:2.1.1"),
+		PureDNSImage:            pureDNSImage,
 		PureDNSWordlist:         envOrDefault("PUREDNS_WORDLIST", "data/puredns/n0kovo_subdomains_huge.txt"),
 		PureDNSResolvers:        envOrDefault("PUREDNS_RESOLVERS", "data/puredns/resolvers.txt"),
 		PureDNSPassiveThreshold: pureDNSThreshold,
 		PureDNSRateLimit:        pureDNSRateLimit,
 		PureDNSTimeout:          pureDNSTimeout,
+		CaduceusImage:           envOrDefault("CADUCEUS_IMAGE", pureDNSImage),
+		CaduceusTimeout:         caduceusTimeout,
 	}
 	if config.DiscordToken == "" {
 		return Config{}, fmt.Errorf("DISCORD_TOKEN is required")
