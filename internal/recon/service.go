@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -217,32 +218,75 @@ func (s *Service) Run(ctx context.Context, rootDomain string) (Result, error) {
 
 // Latest returns the newest persisted HTTPX artifact for an exact root domain.
 func (s *Service) Latest(rootDomain string) (Result, error) {
-	domain, err := subdomains.NormalizeRootDomain(rootDomain)
+	results, err := s.Results(rootDomain)
 	if err != nil {
 		return Result{}, err
+	}
+	return results[0], nil
+}
+
+// Results returns completed HTTPX artifacts matching a query. Exact domains
+// return only their newest run; queries containing * return every matching run,
+// ordered newest first. A query containing only * matches every completed run.
+func (s *Service) Results(query string) ([]Result, error) {
+	query = strings.ToLower(strings.TrimSpace(query))
+	wildcard := strings.Contains(query, "*")
+	if query == "" {
+		return nil, fmt.Errorf("results query is required")
+	}
+	if !wildcard {
+		domain, err := subdomains.NormalizeRootDomain(query)
+		if err != nil {
+			return nil, err
+		}
+		query = domain
+	} else if wildcard {
+		for _, character := range query {
+			if character == '*' || character == '.' || character == '-' ||
+				(character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') {
+				continue
+			}
+			return nil, fmt.Errorf("results wildcard may contain only domain text and *")
+		}
+		if _, err := path.Match(query, "example.com"); err != nil {
+			return nil, fmt.Errorf("invalid results wildcard: %w", err)
+		}
 	}
 
 	entries, err := os.ReadDir(s.outputRoot)
 	if errors.Is(err, os.ErrNotExist) {
-		return Result{}, fmt.Errorf("%w for %s", ErrResultsNotFound, domain)
+		return nil, fmt.Errorf("%w for %s", ErrResultsNotFound, query)
 	}
 	if err != nil {
-		return Result{}, fmt.Errorf("read results directory: %w", err)
+		return nil, fmt.Errorf("read results directory: %w", err)
 	}
 
 	candidates := make([]string, 0)
 	for _, entry := range entries {
-		if entry.IsDir() && runDirectoryMatches(entry.Name(), domain) {
+		if !entry.IsDir() {
+			continue
+		}
+		domain, ok := runDirectoryDomain(entry.Name())
+		if !ok {
+			continue
+		}
+		matched := !wildcard && domain == query
+		if wildcard {
+			matched, _ = path.Match(query, domain)
+		}
+		if matched {
 			candidates = append(candidates, entry.Name())
 		}
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(candidates)))
 
+	results := make([]Result, 0, len(candidates))
 	for _, name := range candidates {
 		directory := filepath.Join(s.outputRoot, name)
 		httpxPath := filepath.Join(directory, HTTPXFilename)
 		if info, statErr := os.Stat(httpxPath); statErr == nil && info.Mode().IsRegular() {
-			return Result{
+			domain, _ := runDirectoryDomain(name)
+			results = append(results, Result{
 				Domain:         domain,
 				Directory:      directory,
 				SubdomainsFile: filepath.Join(directory, SubdomainsFilename),
@@ -250,11 +294,17 @@ func (s *Service) Latest(rootDomain string) (Result, error) {
 				PureDNSFile:    filepath.Join(directory, PureDNSFilename),
 				ResolvedFile:   filepath.Join(directory, ResolvedFilename),
 				HTTPXFile:      httpxPath,
-			}, nil
+			})
+			if !wildcard {
+				break
+			}
 		}
 	}
 
-	return Result{}, fmt.Errorf("%w for %s", ErrResultsNotFound, domain)
+	if len(results) == 0 {
+		return nil, fmt.Errorf("%w for %s", ErrResultsNotFound, query)
+	}
+	return results, nil
 }
 
 func scopedDomains(values []string, rootDomain string) []string {
@@ -288,25 +338,27 @@ func mergeDomains(groups ...[]string) []string {
 }
 
 func runDirectoryMatches(name, domain string) bool {
+	parsedDomain, ok := runDirectoryDomain(name)
+	return ok && parsedDomain == domain
+}
+
+func runDirectoryDomain(name string) (string, bool) {
 	const timestampLength = len("20060102T150405.000Z")
 	if len(name) <= timestampLength || name[timestampLength] != '_' {
-		return false
+		return "", false
 	}
 	if _, err := time.Parse("20060102T150405.000Z", name[:timestampLength]); err != nil {
-		return false
+		return "", false
 	}
 
 	remainder := name[timestampLength+1:]
-	if remainder == domain {
-		return true
+	if separator := strings.LastIndexByte(remainder, '_'); separator >= 0 {
+		if _, err := strconv.ParseUint(remainder[separator+1:], 10, 32); err == nil {
+			remainder = remainder[:separator]
+		}
 	}
-	prefix := domain + "_"
-	if !strings.HasPrefix(remainder, prefix) {
-		return false
-	}
-	collisionSuffix := strings.TrimPrefix(remainder, prefix)
-	_, err := strconv.ParseUint(collisionSuffix, 10, 32)
-	return err == nil
+	domain, err := subdomains.NormalizeRootDomain(remainder)
+	return domain, err == nil
 }
 
 func (s *Service) createRunDirectory(domain string) (string, error) {

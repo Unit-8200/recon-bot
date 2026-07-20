@@ -53,8 +53,14 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "domain",
-					Description: "Root domain, for example example.com",
+					Description: "Root domain or wildcard, such as * or *example.com",
 					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionBoolean,
+					Name:        "urls",
+					Description: "Return only unique HTTP and HTTPS URLs",
+					Required:    false,
 				},
 			},
 		},
@@ -187,6 +193,7 @@ func (b *Bot) handleResults(session *discordgo.Session, event *discordgo.Interac
 		}
 		return
 	}
+	urlsOnly := booleanOption(event.ApplicationCommandData().Options, "urls")
 
 	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
@@ -196,7 +203,7 @@ func (b *Bot) handleResults(session *discordgo.Session, event *discordgo.Interac
 		return
 	}
 
-	result, err := b.recon.Latest(domain)
+	results, err := b.recon.Results(domain)
 	if err != nil {
 		content := "Could not read previous scan results. Review the bot logs."
 		if errors.Is(err, recon.ErrResultsNotFound) {
@@ -210,20 +217,51 @@ func (b *Bot) handleResults(session *discordgo.Session, event *discordgo.Interac
 		return
 	}
 
-	file, err := os.Open(result.HTTPXFile)
+	paths := make([]string, 0, len(results))
+	for _, result := range results {
+		paths = append(paths, result.HTTPXFile)
+	}
+	content := fmt.Sprintf("Latest scan results for `%s`.", results[0].Domain)
+	if len(results) > 1 || strings.Contains(domain, "*") {
+		content = fmt.Sprintf("Scan results matching `%s`.", domain)
+	}
+
+	if urlsOnly {
+		urls, readErr := recon.ReadUniqueURLs(paths...)
+		if readErr != nil {
+			log.Printf("extract /results URLs for %q: %v", domain, readErr)
+			content := "The saved HTTPX results could not be processed. Review the bot logs."
+			_, _ = session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &content})
+			return
+		}
+
+		contents := strings.Join(urls, "\n")
+		if contents != "" {
+			contents += "\n"
+		}
+		if _, editErr := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{
+			Content: &content,
+			Files: []*discordgo.File{
+				{Name: recon.URLsFilename, ContentType: "text/plain; charset=utf-8", Reader: strings.NewReader(contents)},
+			},
+		}); editErr != nil {
+			log.Printf("send URL-only /results for %q: %v", domain, editErr)
+		}
+		return
+	}
+
+	combined, err := recon.ReadCombinedHTTPX(paths...)
 	if err != nil {
-		log.Printf("open /results file for %q: %v", domain, err)
+		log.Printf("combine /results files for %q: %v", domain, err)
 		content := "The saved HTTPX results could not be opened. Review the bot logs."
 		_, _ = session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &content})
 		return
 	}
-	defer file.Close()
 
-	content := fmt.Sprintf("Latest scan results for `%s`.", result.Domain)
 	if _, err := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{
 		Content: &content,
 		Files: []*discordgo.File{
-			{Name: recon.HTTPXFilename, ContentType: "text/plain; charset=utf-8", Reader: file},
+			{Name: recon.HTTPXFilename, ContentType: "text/plain; charset=utf-8", Reader: strings.NewReader(combined)},
 		},
 	}); err != nil {
 		log.Printf("send /results for %q: %v", domain, err)
@@ -259,4 +297,13 @@ func integerOption(options []*discordgo.ApplicationCommandInteractionDataOption,
 		}
 	}
 	return 0
+}
+
+func booleanOption(options []*discordgo.ApplicationCommandInteractionDataOption, name string) bool {
+	for _, option := range options {
+		if option.Name == name && option.Type == discordgo.ApplicationCommandOptionBoolean {
+			return option.BoolValue()
+		}
+	}
+	return false
 }

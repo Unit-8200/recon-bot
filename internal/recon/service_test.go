@@ -85,6 +85,59 @@ func TestLatestReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestResultsSupportsAllAndWildcardQueries(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	service, err := New(root, fakeEnumerator{}, fakeValidator{}, fakeProber{})
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+
+	directories := []string{
+		"20260717T120000.000Z_example.com",
+		"20260717T130000.000Z_notexample.com",
+		"20260717T140000.000Z_example.com",
+		"20260717T150000.000Z_other.net",
+	}
+	for _, directory := range directories {
+		path := filepath.Join(root, directory)
+		if err := os.Mkdir(path, 0o750); err != nil {
+			t.Fatalf("Mkdir(%q): %v", path, err)
+		}
+		if err := os.WriteFile(filepath.Join(path, HTTPXFilename), []byte(directory+"\n"), 0o640); err != nil {
+			t.Fatalf("WriteFile(%q): %v", path, err)
+		}
+	}
+
+	all, err := service.Results("*")
+	if err != nil {
+		t.Fatalf("Results(*): %v", err)
+	}
+	if len(all) != 4 || all[0].Domain != "other.net" || all[3].Domain != "example.com" {
+		t.Fatalf("Results(*) = %#v", all)
+	}
+
+	wildcard, err := service.Results("*example.com")
+	if err != nil {
+		t.Fatalf("Results(wildcard): %v", err)
+	}
+	if len(wildcard) != 3 {
+		t.Fatalf("Results(wildcard) returned %d results, want 3", len(wildcard))
+	}
+	if wildcard[0].Domain != "example.com" || wildcard[1].Domain != "notexample.com" || wildcard[2].Domain != "example.com" {
+		t.Fatalf("Results(wildcard) domains = %q, %q, %q", wildcard[0].Domain, wildcard[1].Domain, wildcard[2].Domain)
+	}
+
+	exact, err := service.Results("example.com")
+	if err != nil {
+		t.Fatalf("Results(exact): %v", err)
+	}
+	if len(exact) != 1 || filepath.Base(exact[0].Directory) != "20260717T140000.000Z_example.com" {
+		t.Fatalf("Results(exact) = %#v", exact)
+	}
+}
+
 type fakeProber struct {
 	values  []httpprobe.Result
 	targets *[]string

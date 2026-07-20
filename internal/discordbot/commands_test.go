@@ -34,6 +34,12 @@ func TestCommandDefinitions(t *testing.T) {
 	if commands[2].DefaultMemberPermissions == nil || *commands[2].DefaultMemberPermissions != discordgo.PermissionAdministrator {
 		t.Fatal("/results must default to administrator-only")
 	}
+	if len(commands[2].Options) != 2 || !commands[2].Options[0].Required || commands[2].Options[1].Required {
+		t.Fatal("/results must have a required domain and optional urls flag")
+	}
+	if commands[2].Options[1].Name != "urls" || commands[2].Options[1].Type != discordgo.ApplicationCommandOptionBoolean {
+		t.Fatal("/results urls option must be Boolean")
+	}
 }
 
 func TestStringOption(t *testing.T) {
@@ -58,5 +64,20 @@ func TestIntegerOption(t *testing.T) {
 
 	if got := integerOption(options, "code"); got != 999 {
 		t.Fatalf("integerOption() = %d, want 999", got)
+	}
+}
+
+func TestBooleanOption(t *testing.T) {
+	t.Parallel()
+
+	options := []*discordgo.ApplicationCommandInteractionDataOption{
+		{Name: "urls", Type: discordgo.ApplicationCommandOptionBoolean, Value: true},
+	}
+
+	if !booleanOption(options, "urls") {
+		t.Fatal("booleanOption() = false, want true")
+	}
+	if booleanOption(options, "missing") {
+		t.Fatal("booleanOption() returned true for a missing option")
 	}
 }

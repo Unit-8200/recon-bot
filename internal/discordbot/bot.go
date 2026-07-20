@@ -14,7 +14,7 @@ import (
 // ReconRunner is the complete passive-enumeration and HTTP-probing workflow.
 type ReconRunner interface {
 	Run(ctx context.Context, rootDomain string) (recon.Result, error)
-	Latest(rootDomain string) (recon.Result, error)
+	Results(query string) ([]recon.Result, error)
 }
 
 // Bot manages a Discord session and its commands.

@@ -50,7 +50,7 @@ go mod tidy
 go run .
 ```
 
-In your Discord test server, enter `/ping`, `/scan domain:example.com`, or `/results domain:example.com`. Only server administrators can use the discovery commands, and you should only scan domains you own or are authorized to assess. Stop the bot with `Ctrl+C`.
+In your Discord test server, enter `/ping`, `/scan domain:example.com`, or `/results domain:example.com`. Use `/results domain:example.com urls:true` to receive a `urls.txt` attachment containing only sorted, unique HTTP(S) URLs from the latest saved scan. `/results domain:*` combines every completed scan, while a wildcard such as `/results domain:*example.com` combines every completed scan whose root domain matches; either form can also use `urls:true`. Only server administrators can use the discovery commands, and you should only scan domains you own or are authorized to assess. Stop the bot with `Ctrl+C`.
 
 `/scan` acknowledges immediately, runs in the background without an interaction timeout, and sends `httpx_results.txt` to the channel or your DMs when finished. Up to two scans run concurrently. Each scan performs consolidated passive discovery, optionally adds PureDNS brute-force results when enabled and below the passive threshold, validates the merged names through DNSX with 50 workers, and sends only names with an A or AAAA record to HTTPX. HTTPX probes ports `80`, `443`, `8443`, `8444`, `8080`, `3000`, and `5000` with 20 workers and normal HTTP/HTTPS fallback behavior. When both ports 80 and 443 respond for the same hostname, only the port 443 result is retained; results from the other configured ports remain untouched. Each run also creates:
 
