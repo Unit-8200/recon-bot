@@ -158,7 +158,7 @@ func (p *Prober) options(targets []string, callback runner.OnResultCallback) run
 		InputTargetHost:         goflags.StringSlice(targets),
 		CustomPorts:             p.ports,
 		CustomHeaders:           customheader.CustomHeaders{"User-Agent: " + userAgent},
-		Threads:                 15,
+		Threads:                 20,
 		Timeout:                 10,
 		Silent:                  true,
 		NoColor:                 true,

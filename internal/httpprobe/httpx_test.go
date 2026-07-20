@@ -17,7 +17,7 @@ func TestOptionsMatchRequestedCLI(t *testing.T) {
 	if err := options.ValidateOptions(); err != nil {
 		t.Fatalf("ValidateOptions(): %v", err)
 	}
-	if options.Threads != 15 || options.NoFallback || !options.FollowHostRedirects {
+	if options.Threads != 20 || options.NoFallback || !options.FollowHostRedirects {
 		t.Fatalf("unexpected concurrency/fallback options: %+v", options)
 	}
 	if !options.NoColor {
