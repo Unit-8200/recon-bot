@@ -128,7 +128,7 @@ func (b *Bot) handleSubs(session *discordgo.Session, event *discordgo.Interactio
 		destination = "your DMs"
 	}
 	acknowledgement := fmt.Sprintf("Scan started for `%s`. The HTTPX results will be sent to %s when it finishes.", domain, destination)
-	if err := respond(session, event, acknowledgement, true); err != nil {
+	if err := respond(session, event, acknowledgement, private); err != nil {
 		log.Printf("acknowledge /subs: %v", err)
 		return
 	}
