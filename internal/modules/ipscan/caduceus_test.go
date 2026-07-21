@@ -2,12 +2,13 @@ package ipscan
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"discord-bot/internal/database"
 )
 
 func TestNormalizeTargets(t *testing.T) {
@@ -40,8 +41,12 @@ func TestNormalizeTargetsRejectsIPv6(t *testing.T) {
 func TestCaduceusScanStreamsTargetsToContainer(t *testing.T) {
 	t.Parallel()
 
-	outputRoot := t.TempDir()
-	scanner, err := NewCaduceus(Options{Image: "test-image", OutputRoot: outputRoot, Timeout: time.Minute, DockerPath: "/test/docker"})
+	store, err := database.Open(filepath.Join(t.TempDir(), "recon.db"))
+	if err != nil {
+		t.Fatalf("database.Open(): %v", err)
+	}
+	defer store.Close()
+	scanner, err := NewCaduceus(Options{Image: "test-image", Store: store, Timeout: time.Minute, DockerPath: "/test/docker"})
 	if err != nil {
 		t.Fatalf("NewCaduceus(): %v", err)
 	}
@@ -68,15 +73,16 @@ func TestCaduceusScanStreamsTargetsToContainer(t *testing.T) {
 	if !reflect.DeepEqual(got.Domains, want) {
 		t.Fatalf("Scan() domains = %#v, want %#v", got.Domains, want)
 	}
-	if filepath.Base(got.Directory) != "20260720T153628.000Z_ips" {
-		t.Fatalf("Scan() directory = %q", got.Directory)
+	runs, err := store.Runs(context.Background(), database.RunKindIPs)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("Runs() = %#v, %v", runs, err)
 	}
-	targetsFile, err := os.ReadFile(got.TargetsFile)
-	if err != nil || string(targetsFile) != "10.0.0.0/24\n192.0.2.1\n" {
-		t.Fatalf("targets artifact = %q, %v", targetsFile, err)
+	targets, err := store.IPTargets(context.Background(), runs[0].ID)
+	if err != nil || !reflect.DeepEqual(targets, []string{"10.0.0.0/24", "192.0.2.1"}) {
+		t.Fatalf("stored targets = %#v, %v", targets, err)
 	}
-	resultsFile, err := os.ReadFile(got.ResultsFile)
-	if err != nil || string(resultsFile) != "a.example.com\nb.example.com\n" {
-		t.Fatalf("results artifact = %q, %v", resultsFile, err)
+	domains, err := store.IPDomains(context.Background(), runs[0].ID)
+	if err != nil || !reflect.DeepEqual(domains, want) {
+		t.Fatalf("stored IP domains = %#v, %v", domains, err)
 	}
 }

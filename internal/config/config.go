@@ -17,7 +17,7 @@ type Config struct {
 	DiscordToken            string
 	DiscordGuildID          string
 	SubfinderProviderConfig string
-	ResultsDirectory        string
+	DatabasePath            string
 	PureDNSEnabled          bool
 	PureDNSImage            string
 	PureDNSWordlist         string
@@ -32,8 +32,8 @@ type Config struct {
 // Load reads an optional local .env file and then loads configuration from the
 // environment. Existing environment variables take precedence over .env.
 func Load() (Config, error) {
-	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return Config{}, fmt.Errorf("load .env: %w", err)
+	if err := loadEnv(); err != nil {
+		return Config{}, err
 	}
 
 	pureDNSEnabled, err := parseBool("PUREDNS_ENABLED", false)
@@ -62,7 +62,7 @@ func Load() (Config, error) {
 		DiscordToken:            strings.TrimSpace(os.Getenv("DISCORD_TOKEN")),
 		DiscordGuildID:          strings.TrimSpace(os.Getenv("DISCORD_GUILD_ID")),
 		SubfinderProviderConfig: strings.TrimSpace(os.Getenv("SUBFINDER_PROVIDER_CONFIG")),
-		ResultsDirectory:        strings.TrimSpace(os.Getenv("RESULTS_DIR")),
+		DatabasePath:            envOrDefault("DATABASE_PATH", "data/recon.db"),
 		PureDNSEnabled:          pureDNSEnabled,
 		PureDNSImage:            pureDNSImage,
 		PureDNSWordlist:         envOrDefault("PUREDNS_WORDLIST", "data/puredns/n0kovo_subdomains_huge.txt"),
@@ -76,11 +76,22 @@ func Load() (Config, error) {
 	if config.DiscordToken == "" {
 		return Config{}, fmt.Errorf("DISCORD_TOKEN is required")
 	}
-	if config.ResultsDirectory == "" {
-		config.ResultsDirectory = "results"
-	}
-
 	return config, nil
+}
+
+// LoadDatabasePath loads only the settings required by offline database commands.
+func LoadDatabasePath() (string, error) {
+	if err := loadEnv(); err != nil {
+		return "", err
+	}
+	return envOrDefault("DATABASE_PATH", "data/recon.db"), nil
+}
+
+func loadEnv() error {
+	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("load .env: %w", err)
+	}
+	return nil
 }
 
 func envOrDefault(name, fallback string) string {

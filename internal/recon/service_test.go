@@ -3,16 +3,58 @@ package recon
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"discord-bot/internal/httpprobe"
+	"discord-bot/internal/database"
+	"discord-bot/internal/modules/httpprobe"
 )
 
 type fakeEnumerator struct{ values []string }
+
+func newTestStore(t *testing.T) *database.Store {
+	t.Helper()
+	store, err := database.Open(filepath.Join(t.TempDir(), "recon.db"))
+	if err != nil {
+		t.Fatalf("database.Open(): %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
+
+func seedSubRun(t *testing.T, store *database.Store, domain string, startedAt time.Time, httpxOutput string) int64 {
+	t.Helper()
+	id, err := store.CreateRun(context.Background(), database.RunKindSubs, domain, startedAt)
+	if err != nil {
+		t.Fatalf("CreateRun(): %v", err)
+	}
+	probes := []database.HTTPProbe{}
+	if httpxOutput != "" {
+		for _, output := range strings.Split(strings.TrimSuffix(httpxOutput, "\n"), "\n") {
+			probe := database.ProbeFromOutput(output)
+			probes = append(probes, probe)
+		}
+	}
+	if err := store.PutHTTPProbes(context.Background(), id, probes); err != nil {
+		t.Fatalf("PutHTTPProbes(): %v", err)
+	}
+	if err := store.FinishRun(context.Background(), id, database.RunStatusCompleted, nil); err != nil {
+		t.Fatalf("FinishRun(): %v", err)
+	}
+	return id
+}
+
+func storedSubdomains(t *testing.T, store *database.Store, runID int64) []database.Subdomain {
+	t.Helper()
+	values, err := store.Subdomains(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("Subdomains(): %v", err)
+	}
+	return values
+}
 
 func (f fakeEnumerator) Enumerate(context.Context, string) ([]string, error) {
 	return append([]string(nil), f.values...), nil
@@ -39,44 +81,29 @@ func (f fakeBruteforcer) Bruteforce(context.Context, string) ([]string, error) {
 func TestLatestReturnsNewestExactDomainResult(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
-	service, err := New(root, fakeEnumerator{}, fakeValidator{}, fakeProber{})
+	store := newTestStore(t)
+	service, err := New(store, fakeEnumerator{}, fakeValidator{}, fakeProber{})
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
 
-	fixtures := map[string]string{
-		"20260717T120000.000Z_example.com":     HTTPXFilename,
-		"20260717T130000.000Z_notexample.com":  HTTPXFilename,
-		"20260717T140000.000Z_example.com":     HTTPXFilename,
-		"20260717T150000.000Z_api.example.com": HTTPXFilename,
-	}
-	for directory, filename := range fixtures {
-		path := filepath.Join(root, directory)
-		if err := os.Mkdir(path, 0o750); err != nil {
-			t.Fatalf("Mkdir(%q): %v", path, err)
-		}
-		if err := os.WriteFile(filepath.Join(path, filename), []byte("result\n"), 0o640); err != nil {
-			t.Fatalf("WriteFile(%q): %v", path, err)
-		}
-	}
+	seedSubRun(t, store, "example.com", time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC), "old\n")
+	seedSubRun(t, store, "notexample.com", time.Date(2026, 7, 17, 13, 0, 0, 0, time.UTC), "other\n")
+	seedSubRun(t, store, "example.com", time.Date(2026, 7, 17, 14, 0, 0, 0, time.UTC), "new\n")
 
 	result, err := service.Latest("example.com")
 	if err != nil {
 		t.Fatalf("Latest(): %v", err)
 	}
-	if filepath.Base(result.Directory) != "20260717T140000.000Z_example.com" {
-		t.Fatalf("directory = %q", result.Directory)
-	}
-	if filepath.Base(result.HTTPXFile) != HTTPXFilename {
-		t.Fatalf("HTTPX file = %q", result.HTTPXFile)
+	if result.HTTPXOutput != "new\n" {
+		t.Fatalf("HTTPX output = %q", result.HTTPXOutput)
 	}
 }
 
 func TestLatestReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
-	service, err := New(t.TempDir(), fakeEnumerator{}, fakeValidator{}, fakeProber{})
+	service, err := New(newTestStore(t), fakeEnumerator{}, fakeValidator{}, fakeProber{})
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
@@ -88,27 +115,16 @@ func TestLatestReturnsNotFound(t *testing.T) {
 func TestResultsSupportsAllAndWildcardQueries(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
-	service, err := New(root, fakeEnumerator{}, fakeValidator{}, fakeProber{})
+	store := newTestStore(t)
+	service, err := New(store, fakeEnumerator{}, fakeValidator{}, fakeProber{})
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
 
-	directories := []string{
-		"20260717T120000.000Z_example.com",
-		"20260717T130000.000Z_notexample.com",
-		"20260717T140000.000Z_example.com",
-		"20260717T150000.000Z_other.net",
-	}
-	for _, directory := range directories {
-		path := filepath.Join(root, directory)
-		if err := os.Mkdir(path, 0o750); err != nil {
-			t.Fatalf("Mkdir(%q): %v", path, err)
-		}
-		if err := os.WriteFile(filepath.Join(path, HTTPXFilename), []byte(directory+"\n"), 0o640); err != nil {
-			t.Fatalf("WriteFile(%q): %v", path, err)
-		}
-	}
+	seedSubRun(t, store, "example.com", time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC), "one\n")
+	seedSubRun(t, store, "notexample.com", time.Date(2026, 7, 17, 13, 0, 0, 0, time.UTC), "two\n")
+	seedSubRun(t, store, "example.com", time.Date(2026, 7, 17, 14, 0, 0, 0, time.UTC), "three\n")
+	seedSubRun(t, store, "other.net", time.Date(2026, 7, 17, 15, 0, 0, 0, time.UTC), "four\n")
 
 	all, err := service.Results("*")
 	if err != nil {
@@ -133,7 +149,7 @@ func TestResultsSupportsAllAndWildcardQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Results(exact): %v", err)
 	}
-	if len(exact) != 1 || filepath.Base(exact[0].Directory) != "20260717T140000.000Z_example.com" {
+	if len(exact) != 1 || exact[0].HTTPXOutput != "three\n" {
 		t.Fatalf("Results(exact) = %#v", exact)
 	}
 }
@@ -141,22 +157,15 @@ func TestResultsSupportsAllAndWildcardQueries(t *testing.T) {
 func TestDomainsReturnsUniqueSortedScanHistory(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
-	service, err := New(root, fakeEnumerator{}, fakeValidator{}, fakeProber{})
+	store := newTestStore(t)
+	service, err := New(store, fakeEnumerator{}, fakeValidator{}, fakeProber{})
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
 
-	for _, directory := range []string{
-		"20260717T120000.000Z_zeta.com",
-		"20260717T130000.000Z_example.com",
-		"20260717T140000.000Z_example.com_1",
-		"not-a-scan-directory",
-	} {
-		if err := os.Mkdir(filepath.Join(root, directory), 0o750); err != nil {
-			t.Fatalf("Mkdir(%q): %v", directory, err)
-		}
-	}
+	seedSubRun(t, store, "zeta.com", time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC), "")
+	seedSubRun(t, store, "example.com", time.Date(2026, 7, 17, 13, 0, 0, 0, time.UTC), "")
+	seedSubRun(t, store, "example.com", time.Date(2026, 7, 17, 14, 0, 0, 0, time.UTC), "")
 
 	got, err := service.Domains()
 	if err != nil {
@@ -171,7 +180,7 @@ func TestDomainsReturnsUniqueSortedScanHistory(t *testing.T) {
 func TestDomainsReturnsNotFoundForEmptyHistory(t *testing.T) {
 	t.Parallel()
 
-	service, err := New(t.TempDir(), fakeEnumerator{}, fakeValidator{}, fakeProber{})
+	service, err := New(newTestStore(t), fakeEnumerator{}, fakeValidator{}, fakeProber{})
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
@@ -195,8 +204,9 @@ func (f fakeProber) Probe(_ context.Context, targets []string) ([]httpprobe.Resu
 func TestRunPersistsArtifacts(t *testing.T) {
 	t.Parallel()
 
+	store := newTestStore(t)
 	var probedTargets []string
-	service, err := New(t.TempDir(), fakeEnumerator{values: []string{"api.example.com", "www.example.com"}}, fakeValidator{
+	service, err := New(store, fakeEnumerator{values: []string{"api.example.com", "www.example.com"}}, fakeValidator{
 		values: []string{"api.example.com"},
 	}, fakeProber{
 		values:  []httpprobe.Result{{Input: "api.example.com", URL: "https://api.example.com", StatusCode: 200, CLIOutput: "https://api.example.com [200] [API] [nginx]"}},
@@ -211,33 +221,19 @@ func TestRunPersistsArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run(): %v", err)
 	}
-	if filepath.Base(result.Directory) != "20260717T120000.000Z_example.com" {
-		t.Fatalf("directory = %q", result.Directory)
-	}
-
-	raw, err := os.ReadFile(result.SubdomainsFile)
-	if err != nil {
-		t.Fatalf("read subdomains: %v", err)
-	}
-	if string(raw) != "api.example.com\nwww.example.com\n" {
-		t.Fatalf("subdomains file = %q", raw)
-	}
-	resolved, err := os.ReadFile(result.ResolvedFile)
-	if err != nil {
-		t.Fatalf("read resolved subdomains: %v", err)
-	}
-	if string(resolved) != "api.example.com\n" {
-		t.Fatalf("resolved subdomains file = %q", resolved)
-	}
 	if len(probedTargets) != 1 || probedTargets[0] != "api.example.com" {
 		t.Fatalf("HTTPX targets = %#v", probedTargets)
 	}
-	probes, err := os.ReadFile(result.HTTPXFile)
-	if err != nil {
-		t.Fatalf("read HTTPX results: %v", err)
+	subdomains := storedSubdomains(t, store, result.RunID)
+	if len(subdomains) != 2 || subdomains[0].Hostname != "api.example.com" || !subdomains[0].Resolved || subdomains[1].Hostname != "www.example.com" {
+		t.Fatalf("stored subdomains = %#v", subdomains)
 	}
-	if string(probes) != "https://api.example.com [200] [API] [nginx]\n" {
-		t.Fatalf("HTTPX results = %q", probes)
+	probes, err := store.HTTPProbes(context.Background(), result.RunID)
+	if err != nil {
+		t.Fatalf("HTTPProbes(): %v", err)
+	}
+	if len(probes) != 1 || probes[0].URL != "https://api.example.com" || probes[0].Output != "https://api.example.com [200] [API] [nginx]" {
+		t.Fatalf("stored HTTP probes = %#v", probes)
 	}
 }
 
@@ -246,9 +242,10 @@ func TestRunMergesPureDNSWhenPassiveCountIsWithinThreshold(t *testing.T) {
 
 	var calls int
 	var validatedTargets []string
+	store := newTestStore(t)
 	validator := recordingValidator{targets: &validatedTargets}
 	service, err := New(
-		t.TempDir(),
+		store,
 		fakeEnumerator{values: []string{"www.example.com"}},
 		validator,
 		fakeProber{},
@@ -275,12 +272,9 @@ func TestRunMergesPureDNSWhenPassiveCountIsWithinThreshold(t *testing.T) {
 	if !equalStrings(validatedTargets, want) {
 		t.Fatalf("validated targets = %#v, want %#v", validatedTargets, want)
 	}
-	pureDNSContents, err := os.ReadFile(result.PureDNSFile)
-	if err != nil {
-		t.Fatalf("read PureDNS artifact: %v", err)
-	}
-	if string(pureDNSContents) != "api.example.com\nwww.example.com\n" {
-		t.Fatalf("PureDNS artifact = %q", pureDNSContents)
+	stored := storedSubdomains(t, store, result.RunID)
+	if len(stored) != 2 || !stored[0].Bruteforced || !stored[1].Bruteforced {
+		t.Fatalf("stored PureDNS flags = %#v", stored)
 	}
 }
 
@@ -289,7 +283,7 @@ func TestRunSkipsPureDNSAbovePassiveThreshold(t *testing.T) {
 
 	var calls int
 	service, err := New(
-		t.TempDir(),
+		newTestStore(t),
 		fakeEnumerator{values: []string{"a.example.com", "b.example.com"}},
 		fakeValidator{},
 		fakeProber{},
@@ -349,7 +343,7 @@ func TestRunAllowsTwoConcurrentScans(t *testing.T) {
 
 	entered := make(chan struct{}, 3)
 	release := make(chan struct{})
-	service, err := New(t.TempDir(), blockingEnumerator{entered: entered, release: release}, fakeValidator{}, fakeProber{})
+	service, err := New(newTestStore(t), blockingEnumerator{entered: entered, release: release}, fakeValidator{}, fakeProber{})
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}

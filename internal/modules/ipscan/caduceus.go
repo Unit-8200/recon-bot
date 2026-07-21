@@ -9,12 +9,13 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"discord-bot/internal/database"
 )
 
 const (
@@ -27,18 +28,18 @@ var containerIDPattern = regexp.MustCompile(`^[a-f0-9]{12,64}$`)
 // Options configures the Docker-backed Caduceus scanner.
 type Options struct {
 	Image      string
-	OutputRoot string
+	Store      *database.Store
 	Timeout    time.Duration
 	DockerPath string
 }
 
 // Result describes one persisted Caduceus run.
 type Result struct {
-	Directory   string
-	Targets     []string
-	Domains     []string
-	TargetsFile string
-	ResultsFile string
+	RunID     int64
+	StartedAt time.Time
+	Targets   []string
+	Domains   []string
+	Output    string
 }
 
 // Caduceus extracts certificate domains from IP addresses and CIDR ranges.
@@ -46,7 +47,7 @@ type Caduceus struct {
 	image      string
 	timeout    time.Duration
 	dockerPath string
-	outputRoot string
+	store      *database.Store
 	gate       chan struct{}
 	run        commandRunner
 	now        func() time.Time
@@ -63,9 +64,8 @@ func NewCaduceus(options Options) (*Caduceus, error) {
 	if options.Timeout <= 0 {
 		return nil, fmt.Errorf("Caduceus timeout must be positive")
 	}
-	outputRoot := strings.TrimSpace(options.OutputRoot)
-	if outputRoot == "" {
-		return nil, fmt.Errorf("Caduceus results directory is required")
+	if options.Store == nil {
+		return nil, fmt.Errorf("database store is required")
 	}
 
 	dockerPath := strings.TrimSpace(options.DockerPath)
@@ -81,7 +81,7 @@ func NewCaduceus(options Options) (*Caduceus, error) {
 		image:      image,
 		timeout:    options.Timeout,
 		dockerPath: dockerPath,
-		outputRoot: outputRoot,
+		store:      options.Store,
 		gate:       make(chan struct{}, 1),
 		run:        runCommand,
 		now:        time.Now,
@@ -125,7 +125,7 @@ func NormalizeTargets(input string) ([]string, error) {
 }
 
 // Scan runs Caduceus and persists its validated input and unique certificate names.
-func (c *Caduceus) Scan(ctx context.Context, targets []string, ports string) (Result, error) {
+func (c *Caduceus) Scan(ctx context.Context, targets []string, ports string) (result Result, scanErr error) {
 	if ctx == nil {
 		return Result{}, fmt.Errorf("context is required")
 	}
@@ -145,18 +145,22 @@ func (c *Caduceus) Scan(ctx context.Context, targets []string, ports string) (Re
 		return Result{}, ctx.Err()
 	}
 
-	directory, err := c.createRunDirectory()
+	result = Result{StartedAt: c.now().UTC(), Targets: normalizedTargets}
+	result.RunID, err = c.store.CreateRun(ctx, database.RunKindIPs, "", result.StartedAt)
 	if err != nil {
 		return Result{}, err
 	}
-	result := Result{
-		Directory:   directory,
-		Targets:     normalizedTargets,
-		TargetsFile: filepath.Join(directory, TargetsFilename),
-		ResultsFile: filepath.Join(directory, ResultsFilename),
-	}
-	if err := writeLines(result.TargetsFile, normalizedTargets); err != nil {
-		return result, fmt.Errorf("write Caduceus targets: %w", err)
+	defer func() {
+		status := database.RunStatusCompleted
+		if scanErr != nil {
+			status = database.RunStatusFailed
+		}
+		if finishErr := c.store.FinishRun(context.Background(), result.RunID, status, scanErr); finishErr != nil && scanErr == nil {
+			scanErr = finishErr
+		}
+	}()
+	if err := c.store.PutIPTargets(ctx, result.RunID, normalizedTargets); err != nil {
+		return result, fmt.Errorf("save Caduceus targets: %w", err)
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, c.timeout)
@@ -184,39 +188,19 @@ func (c *Caduceus) Scan(ctx context.Context, targets []string, ports string) (Re
 		return result, fmt.Errorf("run Caduceus container: %w", err)
 	}
 	result.Domains = uniqueLines(output)
-	if err := writeLines(result.ResultsFile, result.Domains); err != nil {
-		return result, fmt.Errorf("write Caduceus results: %w", err)
+	result.Output = lines(result.Domains)
+	if err := c.store.PutIPDomains(ctx, result.RunID, result.Domains); err != nil {
+		return result, fmt.Errorf("save Caduceus results: %w", err)
 	}
 	return result, nil
 }
 
-func (c *Caduceus) createRunDirectory() (string, error) {
-	if err := os.MkdirAll(c.outputRoot, 0o750); err != nil {
-		return "", fmt.Errorf("create results root: %w", err)
-	}
-	baseName := c.now().UTC().Format("20060102T150405.000Z") + "_ips"
-	for suffix := 0; ; suffix++ {
-		name := baseName
-		if suffix > 0 {
-			name = fmt.Sprintf("%s_%d", baseName, suffix)
-		}
-		directory := filepath.Join(c.outputRoot, name)
-		err := os.Mkdir(directory, 0o750)
-		if err == nil {
-			return directory, nil
-		}
-		if !os.IsExist(err) {
-			return "", fmt.Errorf("create Caduceus run directory: %w", err)
-		}
-	}
-}
-
-func writeLines(path string, values []string) error {
+func lines(values []string) string {
 	contents := ""
 	if len(values) > 0 {
 		contents = strings.Join(values, "\n") + "\n"
 	}
-	return os.WriteFile(path, []byte(contents), 0o640)
+	return contents
 }
 
 func normalizePorts(input string) (string, error) {

@@ -10,8 +10,8 @@ func TestCommandDefinitions(t *testing.T) {
 	t.Parallel()
 
 	commands := commandDefinitions()
-	if len(commands) != 5 {
-		t.Fatalf("got %d commands, want 5", len(commands))
+	if len(commands) != 7 {
+		t.Fatalf("got %d commands, want 7", len(commands))
 	}
 	if commands[1].Name != "subs" {
 		t.Fatalf("second command is %q, want subs", commands[1].Name)
@@ -54,6 +54,26 @@ func TestCommandDefinitions(t *testing.T) {
 	}
 	if len(commands[4].Options) != 3 || commands[4].Options[1].Type != discordgo.ApplicationCommandOptionAttachment {
 		t.Fatal("/ips must support targets, file attachment, and ports options")
+	}
+	if commands[5].Name != "add" || len(commands[5].Options) != 2 {
+		t.Fatal("sixth command must be /add with data and description options")
+	}
+	if !commands[5].Options[0].Required || commands[5].Options[0].Name != "data" {
+		t.Fatal("/add must require data")
+	}
+	if commands[5].Options[1].Required || commands[5].Options[1].Name != "description" {
+		t.Fatal("/add description must be optional")
+	}
+	if commands[6].Name != "get" || len(commands[6].Options) != 1 {
+		t.Fatal("seventh command must be /get with one optional flag")
+	}
+	if commands[6].Options[0].Name != "descriptions" || commands[6].Options[0].Type != discordgo.ApplicationCommandOptionBoolean || commands[6].Options[0].Required {
+		t.Fatal("/get descriptions must be an optional Boolean")
+	}
+	for _, command := range commands[5:] {
+		if command.DefaultMemberPermissions == nil || *command.DefaultMemberPermissions != discordgo.PermissionAdministrator {
+			t.Fatalf("/%s must default to administrator-only", command.Name)
+		}
 	}
 }
 

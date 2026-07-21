@@ -6,13 +6,15 @@ import (
 	"fmt"
 
 	"discord-bot/internal/config"
+	"discord-bot/internal/database"
 	"discord-bot/internal/discordbot"
-	"discord-bot/internal/dnsbruteforce"
-	"discord-bot/internal/dnsvalidate"
-	"discord-bot/internal/httpprobe"
-	"discord-bot/internal/ipscan"
+	"discord-bot/internal/migration"
+	"discord-bot/internal/modules/dnsbruteforce"
+	"discord-bot/internal/modules/dnsvalidate"
+	"discord-bot/internal/modules/httpprobe"
+	"discord-bot/internal/modules/ipscan"
+	"discord-bot/internal/modules/subdomains"
 	"discord-bot/internal/recon"
-	"discord-bot/internal/subdomains"
 )
 
 // Run builds the application's dependencies and runs until ctx is cancelled.
@@ -21,6 +23,11 @@ func Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	store, err := database.Open(cfg.DatabasePath)
+	if err != nil {
+		return fmt.Errorf("initialize database: %w", err)
+	}
+	defer store.Close()
 
 	finder, err := subdomains.NewFinderWithOptions(subdomains.FinderOptions{
 		ProviderConfig: cfg.SubfinderProviderConfig,
@@ -52,23 +59,37 @@ func Run(ctx context.Context) error {
 		reconOptions = append(reconOptions, recon.WithBruteforcer(bruteforcer, cfg.PureDNSPassiveThreshold))
 	}
 
-	workflow, err := recon.New(cfg.ResultsDirectory, finder, validator, prober, reconOptions...)
+	workflow, err := recon.New(store, finder, validator, prober, reconOptions...)
 	if err != nil {
 		return fmt.Errorf("initialize recon workflow: %w", err)
 	}
 	ipScanner, err := ipscan.NewCaduceus(ipscan.Options{
-		Image:      cfg.CaduceusImage,
-		OutputRoot: cfg.ResultsDirectory,
-		Timeout:    cfg.CaduceusTimeout,
+		Image:   cfg.CaduceusImage,
+		Store:   store,
+		Timeout: cfg.CaduceusTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("initialize Caduceus: %w", err)
 	}
 
-	bot, err := discordbot.New(cfg.DiscordToken, cfg.DiscordGuildID, workflow, ipScanner)
+	bot, err := discordbot.New(cfg.DiscordToken, cfg.DiscordGuildID, workflow, ipScanner, store)
 	if err != nil {
 		return err
 	}
 
 	return bot.Run(ctx)
+}
+
+// Migrate imports legacy filesystem runs into the configured SQLite database.
+func Migrate(ctx context.Context, folder string) (migration.Report, error) {
+	databasePath, err := config.LoadDatabasePath()
+	if err != nil {
+		return migration.Report{}, err
+	}
+	store, err := database.Open(databasePath)
+	if err != nil {
+		return migration.Report{}, fmt.Errorf("initialize database: %w", err)
+	}
+	defer store.Close()
+	return migration.Results(ctx, store, folder)
 }

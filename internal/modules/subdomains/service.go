@@ -10,9 +10,9 @@ import (
 	"strings"
 	"sync"
 
-	githubsubs "discord-bot/internal/subdomains/github-subs"
-	"discord-bot/internal/subdomains/shosubgo"
-	subfindersource "discord-bot/internal/subdomains/subfinder"
+	githubsubs "discord-bot/internal/modules/subdomains/github-subs"
+	"discord-bot/internal/modules/subdomains/shosubgo"
+	subfindersource "discord-bot/internal/modules/subdomains/subfinder"
 )
 
 type source interface {

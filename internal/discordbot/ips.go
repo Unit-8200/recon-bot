@@ -7,10 +7,10 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
+	"strings"
 	"time"
 
-	"discord-bot/internal/ipscan"
+	"discord-bot/internal/modules/ipscan"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -85,8 +85,8 @@ func (b *Bot) runIPs(ctx context.Context, session *discordgo.Session, channelID,
 	if err != nil {
 		log.Printf("run /ips: %v", err)
 		content := fmt.Sprintf("<@%s> IP scan failed. Review the bot logs.", userID)
-		if result.Directory != "" {
-			content = fmt.Sprintf("<@%s> IP scan stopped. Partial artifacts were saved in `%s`.", userID, result.Directory)
+		if result.RunID != 0 {
+			content = fmt.Sprintf("<@%s> IP scan stopped. Partial scan data was saved in SQLite.", userID)
 		}
 		if _, sendErr := session.ChannelMessageSend(channelID, content); sendErr != nil {
 			log.Printf("report /ips failure: %v", sendErr)
@@ -94,19 +94,10 @@ func (b *Bot) runIPs(ctx context.Context, session *discordgo.Session, channelID,
 		return
 	}
 
-	file, err := os.Open(result.ResultsFile)
-	if err != nil {
-		log.Printf("open /ips results: %v", err)
-		if _, sendErr := session.ChannelMessageSend(channelID, fmt.Sprintf("<@%s> IP scan complete, but its saved result could not be attached.", userID)); sendErr != nil {
-			log.Printf("report /ips attachment failure: %v", sendErr)
-		}
-		return
-	}
-	defer file.Close()
 	if _, err := session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
 		Content: fmt.Sprintf("<@%s> IP scan complete.", userID),
 		Files: []*discordgo.File{
-			{Name: ipscan.ResultsFilename, ContentType: "text/plain; charset=utf-8", Reader: file},
+			{Name: ipscan.ResultsFilename, ContentType: "text/plain; charset=utf-8", Reader: strings.NewReader(result.Output)},
 		},
 	}); err != nil {
 		log.Printf("publish /ips results: %v", err)

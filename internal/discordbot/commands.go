@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 
 	"discord-bot/internal/recon"
@@ -26,7 +25,7 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 		},
 		{
 			Name:                     "subs",
-			Description:              "Enumerate subdomains, probe web services, and save artifacts",
+			Description:              "Enumerate subdomains, probe web services, and save results",
 			DefaultMemberPermissions: &adminPermissions,
 			Contexts:                 &guildContexts,
 			Options: []*discordgo.ApplicationCommandOption{
@@ -92,6 +91,42 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "ports",
 					Description: "Comma-separated TLS ports; defaults to 443",
+					Required:    false,
+				},
+			},
+		},
+		{
+			Name:                     "add",
+			Description:              "Store a value with an optional description",
+			DefaultMemberPermissions: &adminPermissions,
+			Contexts:                 &guildContexts,
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "data",
+					Description: "Single-line value to store",
+					Required:    true,
+					MaxLength:   4000,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "description",
+					Description: "Optional context for this value",
+					Required:    false,
+					MaxLength:   1000,
+				},
+			},
+		},
+		{
+			Name:                     "get",
+			Description:              "Get all manually stored data",
+			DefaultMemberPermissions: &adminPermissions,
+			Contexts:                 &guildContexts,
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionBoolean,
+					Name:        "descriptions",
+					Description: "Include optional descriptions in the output",
 					Required:    false,
 				},
 			},
@@ -165,13 +200,13 @@ func (b *Bot) runSubs(ctx context.Context, session *discordgo.Session, channelID
 	if err != nil {
 		log.Printf("run scan for %q: %v", domain, err)
 		content := fmt.Sprintf("<@%s> scan failed for `%s`. Review the bot logs.", userID, domain)
-		if result.Directory != "" {
-			content = fmt.Sprintf("<@%s> scan stopped for `%s`. Partial artifacts were saved in `%s`.", userID, domain, result.Directory)
+		if result.RunID != 0 {
+			content = fmt.Sprintf("<@%s> scan stopped for `%s`. Partial scan data was saved in SQLite.", userID, domain)
 		}
 		if private {
 			content = fmt.Sprintf("Scan failed for `%s`. Review the bot logs.", domain)
-			if result.Directory != "" {
-				content = fmt.Sprintf("Scan stopped for `%s`. Partial artifacts were saved in `%s`.", domain, result.Directory)
+			if result.RunID != 0 {
+				content = fmt.Sprintf("Scan stopped for `%s`. Partial scan data was saved in SQLite.", domain)
 			}
 		}
 		if _, sendErr := session.ChannelMessageSend(deliveryChannelID, content); sendErr != nil {
@@ -185,25 +220,14 @@ func (b *Bot) runSubs(ctx context.Context, session *discordgo.Session, channelID
 		content = fmt.Sprintf("Scan complete for `%s`.", result.Domain)
 	}
 
-	httpxFile, err := os.Open(result.HTTPXFile)
-	if err != nil {
-		log.Printf("open HTTPX results for %q: %v", domain, err)
-		content += fmt.Sprintf(" The attachment could not be opened; local artifacts: `%s`.", result.Directory)
-		if _, sendErr := session.ChannelMessageSend(deliveryChannelID, content); sendErr != nil {
-			log.Printf("report /subs attachment failure: %v", sendErr)
-		}
-		return
-	}
-	defer httpxFile.Close()
-
 	if _, err := session.ChannelMessageSendComplex(deliveryChannelID, &discordgo.MessageSend{
 		Content: content,
 		Files: []*discordgo.File{
-			{Name: "httpx_results.txt", ContentType: "text/plain; charset=utf-8", Reader: httpxFile},
+			{Name: recon.HTTPXFilename, ContentType: "text/plain; charset=utf-8", Reader: strings.NewReader(result.HTTPXOutput)},
 		},
 	}); err != nil {
 		log.Printf("publish /subs results for %q: %v", domain, err)
-		fallback := fmt.Sprintf("<@%s> scan completed for `%s`, but Discord rejected the HTTPX attachment. Local artifacts: `%s`.", userID, result.Domain, result.Directory)
+		fallback := fmt.Sprintf("<@%s> scan completed for `%s`, but Discord rejected the HTTPX attachment. The results remain saved in SQLite.", userID, result.Domain)
 		if _, sendErr := session.ChannelMessageSend(deliveryChannelID, fallback); sendErr != nil {
 			log.Printf("report /subs publish failure: %v", sendErr)
 		}
@@ -249,9 +273,9 @@ func (b *Bot) handleResults(session *discordgo.Session, event *discordgo.Interac
 		return
 	}
 
-	paths := make([]string, 0, len(results))
+	outputs := make([]string, 0, len(results))
 	for _, result := range results {
-		paths = append(paths, result.HTTPXFile)
+		outputs = append(outputs, result.HTTPXOutput)
 	}
 	content := fmt.Sprintf("Latest scan results for `%s`.", results[0].Domain)
 	if len(results) > 1 || strings.Contains(domain, "*") {
@@ -259,13 +283,7 @@ func (b *Bot) handleResults(session *discordgo.Session, event *discordgo.Interac
 	}
 
 	if urlsOnly {
-		urls, readErr := recon.ReadUniqueURLs(paths...)
-		if readErr != nil {
-			log.Printf("extract /results URLs for %q: %v", domain, readErr)
-			content := "The saved HTTPX results could not be processed. Review the bot logs."
-			_, _ = session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &content})
-			return
-		}
+		urls := recon.UniqueURLs(outputs...)
 
 		contents := strings.Join(urls, "\n")
 		if contents != "" {
@@ -282,13 +300,7 @@ func (b *Bot) handleResults(session *discordgo.Session, event *discordgo.Interac
 		return
 	}
 
-	combined, err := recon.ReadCombinedHTTPX(paths...)
-	if err != nil {
-		log.Printf("combine /results files for %q: %v", domain, err)
-		content := "The saved HTTPX results could not be opened. Review the bot logs."
-		_, _ = session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &content})
-		return
-	}
+	combined := recon.CombineHTTPX(outputs...)
 
 	if _, err := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{
 		Content: &content,

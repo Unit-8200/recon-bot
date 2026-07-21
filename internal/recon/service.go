@@ -1,4 +1,4 @@
-// Package recon orchestrates passive enumeration, HTTP probing, and artifacts.
+// Package recon orchestrates passive enumeration, HTTP probing, and persistence.
 package recon
 
 import (
@@ -6,16 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"path"
-	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	"discord-bot/internal/httpprobe"
-	"discord-bot/internal/subdomains"
+	"discord-bot/internal/database"
+	"discord-bot/internal/modules/httpprobe"
+	"discord-bot/internal/modules/subdomains"
 )
 
 const (
@@ -53,23 +51,20 @@ type Prober interface {
 
 // Result describes one persisted reconnaissance run.
 type Result struct {
-	Domain         string
-	Directory      string
-	Subdomains     []string
-	Passive        []string
-	PureDNS        []string
-	Resolved       []string
-	HTTPXResults   []httpprobe.Result
-	SubdomainsFile string
-	PassiveFile    string
-	PureDNSFile    string
-	ResolvedFile   string
-	HTTPXFile      string
+	RunID        int64
+	Domain       string
+	StartedAt    time.Time
+	Subdomains   []string
+	Passive      []string
+	PureDNS      []string
+	Resolved     []string
+	HTTPXResults []httpprobe.Result
+	HTTPXOutput  string
 }
 
 // Service runs and persists the discovery, DNS-validation, and HTTP-probing workflow.
 type Service struct {
-	outputRoot     string
+	store          *database.Store
 	enumerator     Enumerator
 	validator      DNSValidator
 	prober         Prober
@@ -100,10 +95,9 @@ func WithBruteforcer(bruteforcer Bruteforcer, passiveThreshold int) Option {
 }
 
 // New creates a reconnaissance workflow.
-func New(outputRoot string, enumerator Enumerator, validator DNSValidator, prober Prober, options ...Option) (*Service, error) {
-	outputRoot = strings.TrimSpace(outputRoot)
-	if outputRoot == "" {
-		return nil, fmt.Errorf("results directory is required")
+func New(store *database.Store, enumerator Enumerator, validator DNSValidator, prober Prober, options ...Option) (*Service, error) {
+	if store == nil {
+		return nil, fmt.Errorf("database store is required")
 	}
 	if enumerator == nil {
 		return nil, fmt.Errorf("subdomain enumerator is required")
@@ -115,7 +109,7 @@ func New(outputRoot string, enumerator Enumerator, validator DNSValidator, probe
 		return nil, fmt.Errorf("HTTP prober is required")
 	}
 	service := &Service{
-		outputRoot: outputRoot,
+		store:      store,
 		enumerator: enumerator,
 		validator:  validator,
 		prober:     prober,
@@ -134,7 +128,7 @@ func New(outputRoot string, enumerator Enumerator, validator DNSValidator, probe
 }
 
 // Run enumerates a root domain, validates DNS, probes live names, and saves each artifact.
-func (s *Service) Run(ctx context.Context, rootDomain string) (Result, error) {
+func (s *Service) Run(ctx context.Context, rootDomain string) (result Result, runErr error) {
 	if ctx == nil {
 		return Result{}, fmt.Errorf("context is required")
 	}
@@ -148,29 +142,28 @@ func (s *Service) Run(ctx context.Context, rootDomain string) (Result, error) {
 	case <-ctx.Done():
 		return Result{}, ctx.Err()
 	}
-
-	passive, err := s.enumerator.Enumerate(ctx, domain)
-	if err != nil {
-		return Result{}, fmt.Errorf("enumerate subdomains: %w", err)
-	}
-
-	directory, err := s.createRunDirectory(domain)
+	result = Result{Domain: domain, StartedAt: s.now().UTC()}
+	result.RunID, err = s.store.CreateRun(ctx, database.RunKindSubs, domain, result.StartedAt)
 	if err != nil {
 		return Result{}, err
 	}
-	result := Result{
-		Domain:         domain,
-		Directory:      directory,
-		Passive:        passive,
-		SubdomainsFile: filepath.Join(directory, SubdomainsFilename),
-		PassiveFile:    filepath.Join(directory, PassiveFilename),
-		PureDNSFile:    filepath.Join(directory, PureDNSFilename),
-		ResolvedFile:   filepath.Join(directory, ResolvedFilename),
-		HTTPXFile:      filepath.Join(directory, HTTPXFilename),
-	}
+	defer func() {
+		status := database.RunStatusCompleted
+		if runErr != nil {
+			status = database.RunStatusFailed
+		}
+		if finishErr := s.store.FinishRun(context.Background(), result.RunID, status, runErr); finishErr != nil && runErr == nil {
+			runErr = finishErr
+		}
+	}()
 
-	if err := writeLines(result.PassiveFile, passive); err != nil {
-		return result, fmt.Errorf("write passive subdomains: %w", err)
+	passive, err := s.enumerator.Enumerate(ctx, domain)
+	if err != nil {
+		return result, fmt.Errorf("enumerate subdomains: %w", err)
+	}
+	result.Passive = passive
+	if err := s.store.PutSubdomains(ctx, result.RunID, passive, database.SubdomainStagePassive); err != nil {
+		return result, fmt.Errorf("save passive subdomains: %w", err)
 	}
 
 	if s.bruteforcer != nil && len(passive) <= s.bruteThreshold {
@@ -186,19 +179,19 @@ func (s *Service) Run(ctx context.Context, rootDomain string) (Result, error) {
 			log.Printf("PureDNS brute force for %s found %d scoped names", domain, len(result.PureDNS))
 		}
 	}
-	if err := writeLines(result.PureDNSFile, result.PureDNS); err != nil {
-		return result, fmt.Errorf("write PureDNS subdomains: %w", err)
+	if err := s.store.PutSubdomains(ctx, result.RunID, result.PureDNS, database.SubdomainStageBruteforced); err != nil {
+		return result, fmt.Errorf("save PureDNS subdomains: %w", err)
 	}
 
 	result.Subdomains = mergeDomains(passive, result.PureDNS)
-	if err := writeLines(result.SubdomainsFile, result.Subdomains); err != nil {
-		return result, fmt.Errorf("write raw subdomains: %w", err)
+	if err := s.store.PutSubdomains(ctx, result.RunID, result.Subdomains, database.SubdomainStageDiscovered); err != nil {
+		return result, fmt.Errorf("save raw subdomains: %w", err)
 	}
 
 	resolved, resolveErr := s.validator.Resolve(ctx, result.Subdomains)
 	result.Resolved = resolved
-	if err := writeLines(result.ResolvedFile, resolved); err != nil {
-		return result, fmt.Errorf("write resolved subdomains: %w", err)
+	if err := s.store.PutSubdomains(ctx, result.RunID, resolved, database.SubdomainStageResolved); err != nil {
+		return result, fmt.Errorf("save resolved subdomains: %w", err)
 	}
 	if resolveErr != nil {
 		return result, fmt.Errorf("validate subdomain DNS: %w", resolveErr)
@@ -207,8 +200,9 @@ func (s *Service) Run(ctx context.Context, rootDomain string) (Result, error) {
 
 	probes, probeErr := s.prober.Probe(ctx, resolved)
 	result.HTTPXResults = probes
-	if err := writeHTTPXLines(result.HTTPXFile, probes); err != nil {
-		return result, fmt.Errorf("write HTTPX results: %w", err)
+	result.HTTPXOutput = httpxLines(probes)
+	if err := s.store.PutHTTPProbes(ctx, result.RunID, databaseProbes(probes)); err != nil {
+		return result, fmt.Errorf("save HTTPX results: %w", err)
 	}
 	if probeErr != nil {
 		return result, fmt.Errorf("probe discovered subdomains: %w", probeErr)
@@ -217,7 +211,7 @@ func (s *Service) Run(ctx context.Context, rootDomain string) (Result, error) {
 	return result, nil
 }
 
-// Latest returns the newest persisted HTTPX artifact for an exact root domain.
+// Latest returns the newest persisted HTTPX results for an exact root domain.
 func (s *Service) Latest(rootDomain string) (Result, error) {
 	results, err := s.Results(rootDomain)
 	if err != nil {
@@ -226,7 +220,7 @@ func (s *Service) Latest(rootDomain string) (Result, error) {
 	return results[0], nil
 }
 
-// Results returns completed HTTPX artifacts matching a query. Exact domains
+// Results returns completed HTTPX results matching a query. Exact domains
 // return only their newest run; queries containing * return every matching run,
 // ordered newest first. A query containing only * matches every completed run.
 func (s *Service) Results(query string) ([]Result, error) {
@@ -254,51 +248,32 @@ func (s *Service) Results(query string) ([]Result, error) {
 		}
 	}
 
-	entries, err := os.ReadDir(s.outputRoot)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("%w for %s", ErrResultsNotFound, query)
-	}
+	runs, err := s.store.CompletedSubRuns(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("read results directory: %w", err)
+		return nil, fmt.Errorf("read scan results: %w", err)
 	}
 
-	candidates := make([]string, 0)
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		domain, ok := runDirectoryDomain(entry.Name())
-		if !ok {
-			continue
-		}
-		matched := !wildcard && domain == query
+	results := make([]Result, 0)
+	for _, run := range runs {
+		matched := !wildcard && run.Domain == query
 		if wildcard {
-			matched, _ = path.Match(query, domain)
+			matched, _ = path.Match(query, run.Domain)
 		}
-		if matched {
-			candidates = append(candidates, entry.Name())
+		if !matched {
+			continue
 		}
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(candidates)))
-
-	results := make([]Result, 0, len(candidates))
-	for _, name := range candidates {
-		directory := filepath.Join(s.outputRoot, name)
-		httpxPath := filepath.Join(directory, HTTPXFilename)
-		if info, statErr := os.Stat(httpxPath); statErr == nil && info.Mode().IsRegular() {
-			domain, _ := runDirectoryDomain(name)
-			results = append(results, Result{
-				Domain:         domain,
-				Directory:      directory,
-				SubdomainsFile: filepath.Join(directory, SubdomainsFilename),
-				PassiveFile:    filepath.Join(directory, PassiveFilename),
-				PureDNSFile:    filepath.Join(directory, PureDNSFilename),
-				ResolvedFile:   filepath.Join(directory, ResolvedFilename),
-				HTTPXFile:      httpxPath,
-			})
-			if !wildcard {
-				break
-			}
+		probes, probeErr := s.store.HTTPProbes(context.Background(), run.ID)
+		if probeErr != nil {
+			return nil, fmt.Errorf("read HTTP probes for run %d: %w", run.ID, probeErr)
+		}
+		results = append(results, Result{
+			RunID:       run.ID,
+			Domain:      run.Domain,
+			StartedAt:   run.StartedAt,
+			HTTPXOutput: databaseHTTPXLines(probes),
+		})
+		if !wildcard {
+			break
 		}
 	}
 
@@ -310,32 +285,13 @@ func (s *Service) Results(query string) ([]Result, error) {
 
 // Domains returns every unique root domain represented in the saved scan history.
 func (s *Service) Domains() ([]string, error) {
-	entries, err := os.ReadDir(s.outputRoot)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, ErrResultsNotFound
-	}
+	domains, err := s.store.Domains(context.Background(), database.RunKindSubs)
 	if err != nil {
-		return nil, fmt.Errorf("read results directory: %w", err)
+		return nil, fmt.Errorf("read scan history: %w", err)
 	}
-
-	unique := make(map[string]struct{})
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		if domain, ok := runDirectoryDomain(entry.Name()); ok {
-			unique[domain] = struct{}{}
-		}
-	}
-	if len(unique) == 0 {
+	if len(domains) == 0 {
 		return nil, ErrResultsNotFound
 	}
-
-	domains := make([]string, 0, len(unique))
-	for domain := range unique {
-		domains = append(domains, domain)
-	}
-	sort.Strings(domains)
 	return domains, nil
 }
 
@@ -369,61 +325,15 @@ func mergeDomains(groups ...[]string) []string {
 	return merged
 }
 
-func runDirectoryMatches(name, domain string) bool {
-	parsedDomain, ok := runDirectoryDomain(name)
-	return ok && parsedDomain == domain
-}
-
-func runDirectoryDomain(name string) (string, bool) {
-	const timestampLength = len("20060102T150405.000Z")
-	if len(name) <= timestampLength || name[timestampLength] != '_' {
-		return "", false
-	}
-	if _, err := time.Parse("20060102T150405.000Z", name[:timestampLength]); err != nil {
-		return "", false
-	}
-
-	remainder := name[timestampLength+1:]
-	if separator := strings.LastIndexByte(remainder, '_'); separator >= 0 {
-		if _, err := strconv.ParseUint(remainder[separator+1:], 10, 32); err == nil {
-			remainder = remainder[:separator]
-		}
-	}
-	domain, err := subdomains.NormalizeRootDomain(remainder)
-	return domain, err == nil
-}
-
-func (s *Service) createRunDirectory(domain string) (string, error) {
-	if err := os.MkdirAll(s.outputRoot, 0o750); err != nil {
-		return "", fmt.Errorf("create results root: %w", err)
-	}
-
-	baseName := s.now().UTC().Format("20060102T150405.000Z") + "_" + domain
-	for suffix := 0; ; suffix++ {
-		name := baseName
-		if suffix > 0 {
-			name = fmt.Sprintf("%s_%d", baseName, suffix)
-		}
-		directory := filepath.Join(s.outputRoot, name)
-		err := os.Mkdir(directory, 0o750)
-		if err == nil {
-			return directory, nil
-		}
-		if !os.IsExist(err) {
-			return "", fmt.Errorf("create run directory: %w", err)
-		}
-	}
-}
-
-func writeLines(path string, values []string) error {
+func lines(values []string) string {
 	contents := ""
 	if len(values) > 0 {
 		contents = strings.Join(values, "\n") + "\n"
 	}
-	return os.WriteFile(path, []byte(contents), 0o640)
+	return contents
 }
 
-func writeHTTPXLines(path string, results []httpprobe.Result) error {
+func httpxLines(results []httpprobe.Result) string {
 	sort.Slice(results, func(left, right int) bool {
 		if results[left].URL == results[right].URL {
 			return results[left].Input < results[right].Input
@@ -431,11 +341,51 @@ func writeHTTPXLines(path string, results []httpprobe.Result) error {
 		return results[left].URL < results[right].URL
 	})
 
-	lines := make([]string, 0, len(results))
+	outputLines := make([]string, 0, len(results))
 	for _, result := range results {
 		if result.CLIOutput != "" {
-			lines = append(lines, result.CLIOutput)
+			outputLines = append(outputLines, result.CLIOutput)
 		}
 	}
-	return writeLines(path, lines)
+	return lines(outputLines)
+}
+
+func databaseProbes(results []httpprobe.Result) []database.HTTPProbe {
+	probes := make([]database.HTTPProbe, 0, len(results))
+	for _, result := range results {
+		probes = append(probes, database.HTTPProbe{
+			Timestamp:     result.Timestamp,
+			Input:         result.Input,
+			URL:           result.URL,
+			FinalURL:      result.FinalURL,
+			Scheme:        result.Scheme,
+			Host:          result.Host,
+			Port:          result.Port,
+			StatusCode:    result.StatusCode,
+			Title:         result.Title,
+			Technologies:  append([]string(nil), result.Technologies...),
+			WebServer:     result.WebServer,
+			IPs:           append([]string(nil), result.IPs...),
+			CDN:           result.CDN,
+			CDNName:       result.CDNName,
+			CDNType:       result.CDNType,
+			ContentLength: result.ContentLength,
+			ContentType:   result.ContentType,
+			BodyPreview:   result.BodyPreview,
+			Location:      result.Location,
+			Error:         result.Error,
+			Output:        result.CLIOutput,
+		})
+	}
+	return probes
+}
+
+func databaseHTTPXLines(probes []database.HTTPProbe) string {
+	values := make([]string, 0, len(probes))
+	for _, probe := range probes {
+		if probe.Output != "" {
+			values = append(values, probe.Output)
+		}
+	}
+	return lines(values)
 }

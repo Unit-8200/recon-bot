@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"log"
 
-	"discord-bot/internal/ipscan"
+	"discord-bot/internal/database"
+	"discord-bot/internal/modules/ipscan"
 	"discord-bot/internal/recon"
 
 	"github.com/bwmarrin/discordgo"
@@ -24,17 +25,24 @@ type IPScanner interface {
 	Scan(ctx context.Context, targets []string, ports string) (ipscan.Result, error)
 }
 
+// DataStore persists and retrieves values submitted through /add.
+type DataStore interface {
+	AddStoredItem(ctx context.Context, data, description string) (bool, error)
+	StoredItems(ctx context.Context) ([]database.StoredItem, error)
+}
+
 // Bot manages a Discord session and its commands.
 type Bot struct {
 	session    *discordgo.Session
 	guildID    string
 	recon      ReconRunner
 	ipScanner  IPScanner
+	dataStore  DataStore
 	runContext context.Context
 }
 
 // New constructs a Discord bot without opening its network connection.
-func New(token, guildID string, reconRunner ReconRunner, ipScanner IPScanner) (*Bot, error) {
+func New(token, guildID string, reconRunner ReconRunner, ipScanner IPScanner, dataStore DataStore) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("Discord token is required")
 	}
@@ -44,6 +52,9 @@ func New(token, guildID string, reconRunner ReconRunner, ipScanner IPScanner) (*
 	if ipScanner == nil {
 		return nil, fmt.Errorf("IP scanner is required")
 	}
+	if dataStore == nil {
+		return nil, fmt.Errorf("data store is required")
+	}
 
 	session, err := discordgo.New("Bot " + token)
 	if err != nil {
@@ -51,7 +62,7 @@ func New(token, guildID string, reconRunner ReconRunner, ipScanner IPScanner) (*
 	}
 	session.Identify.Intents = discordgo.IntentsGuilds
 
-	bot := &Bot{session: session, guildID: guildID, recon: reconRunner, ipScanner: ipScanner}
+	bot := &Bot{session: session, guildID: guildID, recon: reconRunner, ipScanner: ipScanner, dataStore: dataStore}
 	session.AddHandler(bot.readyHandler)
 	session.AddHandler(bot.interactionHandler)
 
@@ -105,5 +116,9 @@ func (b *Bot) interactionHandler(session *discordgo.Session, event *discordgo.In
 		b.handleDomains(session, event)
 	case "ips":
 		b.handleIPs(session, event)
+	case "add":
+		b.handleAdd(session, event)
+	case "get":
+		b.handleGet(session, event)
 	}
 }
