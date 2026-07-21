@@ -10,67 +10,61 @@ func TestCommandDefinitions(t *testing.T) {
 	t.Parallel()
 
 	commands := commandDefinitions()
-	if len(commands) != 7 {
-		t.Fatalf("got %d commands, want 7", len(commands))
+	if len(commands) != 4 {
+		t.Fatalf("got %d commands, want 4", len(commands))
 	}
-	if commands[1].Name != "subs" {
-		t.Fatalf("second command is %q, want subs", commands[1].Name)
+	scan := commands[1]
+	if scan.Name != "scan" || len(scan.Options) != 2 {
+		t.Fatal("second command must be /scan with subs and ips subcommands")
 	}
-	if commands[1].DefaultMemberPermissions == nil || *commands[1].DefaultMemberPermissions != discordgo.PermissionAdministrator {
-		t.Fatal("/subs must default to administrator-only")
+	if scan.Options[0].Name != "subs" || scan.Options[0].Type != discordgo.ApplicationCommandOptionSubCommand {
+		t.Fatal("/scan subs must be a subcommand")
 	}
-	if len(commands[1].Options) != 2 || !commands[1].Options[0].Required || commands[1].Options[1].Required {
-		t.Fatal("/subs must have a required domain and optional code")
+	if len(scan.Options[0].Options) != 2 || !scan.Options[0].Options[0].Required || scan.Options[0].Options[0].Name != "domain" {
+		t.Fatal("/scan subs must require domain and support code")
 	}
-	if commands[1].Options[1].Name != "code" || commands[1].Options[1].Description != "Optional scan code" {
-		t.Fatal("/subs code option must use neutral public wording")
+	if scan.Options[0].Options[1].Name != "code" || scan.Options[0].Options[1].Required || scan.Options[0].Options[1].Description != "Optional scan code" {
+		t.Fatal("/scan subs code must be optional and use neutral wording")
 	}
-	if len(commands[1].Options[1].Choices) != 0 {
-		t.Fatal("/subs code option must not expose its meaning through choices")
+	if len(scan.Options[0].Options[1].Choices) != 0 {
+		t.Fatal("/scan subs code must not expose its meaning through choices")
 	}
-	if commands[2].Name != "results" {
-		t.Fatalf("third command is %q, want results", commands[2].Name)
+	if scan.Options[1].Name != "ips" || scan.Options[1].Type != discordgo.ApplicationCommandOptionSubCommand || len(scan.Options[1].Options) != 3 {
+		t.Fatal("/scan ips must support targets, file, and ports")
 	}
-	if commands[2].DefaultMemberPermissions == nil || *commands[2].DefaultMemberPermissions != discordgo.PermissionAdministrator {
-		t.Fatal("/results must default to administrator-only")
+	if scan.Options[1].Options[1].Type != discordgo.ApplicationCommandOptionAttachment {
+		t.Fatal("/scan ips file must be an attachment")
 	}
-	if len(commands[2].Options) != 2 || !commands[2].Options[0].Required || commands[2].Options[1].Required {
-		t.Fatal("/results must have a required domain and optional urls flag")
+	if commands[2].Name != "add" || len(commands[2].Options) != 2 {
+		t.Fatal("third command must be /add with data and description options")
 	}
-	if commands[2].Options[1].Name != "urls" || commands[2].Options[1].Type != discordgo.ApplicationCommandOptionBoolean {
-		t.Fatal("/results urls option must be Boolean")
-	}
-	if commands[3].Name != "domains" {
-		t.Fatalf("fourth command is %q, want domains", commands[3].Name)
-	}
-	if commands[3].DefaultMemberPermissions == nil || *commands[3].DefaultMemberPermissions != discordgo.PermissionAdministrator {
-		t.Fatal("/domains must default to administrator-only")
-	}
-	if commands[4].Name != "ips" {
-		t.Fatalf("fifth command is %q, want ips", commands[4].Name)
-	}
-	if commands[4].DefaultMemberPermissions == nil || *commands[4].DefaultMemberPermissions != discordgo.PermissionAdministrator {
-		t.Fatal("/ips must default to administrator-only")
-	}
-	if len(commands[4].Options) != 3 || commands[4].Options[1].Type != discordgo.ApplicationCommandOptionAttachment {
-		t.Fatal("/ips must support targets, file attachment, and ports options")
-	}
-	if commands[5].Name != "add" || len(commands[5].Options) != 2 {
-		t.Fatal("sixth command must be /add with data and description options")
-	}
-	if !commands[5].Options[0].Required || commands[5].Options[0].Name != "data" {
+	if !commands[2].Options[0].Required || commands[2].Options[0].Name != "data" {
 		t.Fatal("/add must require data")
 	}
-	if commands[5].Options[1].Required || commands[5].Options[1].Name != "description" {
+	if commands[2].Options[1].Required || commands[2].Options[1].Name != "description" {
 		t.Fatal("/add description must be optional")
 	}
-	if commands[6].Name != "get" || len(commands[6].Options) != 1 {
-		t.Fatal("seventh command must be /get with one optional flag")
+	if commands[3].Name != "get" || len(commands[3].Options) != 3 {
+		t.Fatal("fourth command must be /get with storage, scans, and roots subcommands")
 	}
-	if commands[6].Options[0].Name != "descriptions" || commands[6].Options[0].Type != discordgo.ApplicationCommandOptionBoolean || commands[6].Options[0].Required {
-		t.Fatal("/get descriptions must be an optional Boolean")
+	for index, name := range []string{"storage", "scans", "roots"} {
+		option := commands[3].Options[index]
+		if option.Type != discordgo.ApplicationCommandOptionSubCommand || option.Name != name {
+			t.Fatalf("/get subcommand %d = %q type %d, want %q subcommand", index, option.Name, option.Type, name)
+		}
 	}
-	for _, command := range commands[5:] {
+	storage := commands[3].Options[0]
+	if len(storage.Options) != 1 || storage.Options[0].Name != "descriptions" || storage.Options[0].Type != discordgo.ApplicationCommandOptionBoolean {
+		t.Fatal("/get storage must have an optional descriptions Boolean")
+	}
+	scans := commands[3].Options[1]
+	if len(scans.Options) != 2 || scans.Options[0].Name != "domain" || !scans.Options[0].Required {
+		t.Fatal("/get scans must require domain and support urls")
+	}
+	if scans.Options[1].Name != "urls" || scans.Options[1].Type != discordgo.ApplicationCommandOptionBoolean || scans.Options[1].Required {
+		t.Fatal("/get scans urls must be an optional Boolean")
+	}
+	for _, command := range commands[1:] {
 		if command.DefaultMemberPermissions == nil || *command.DefaultMemberPermissions != discordgo.PermissionAdministrator {
 			t.Fatalf("/%s must default to administrator-only", command.Name)
 		}

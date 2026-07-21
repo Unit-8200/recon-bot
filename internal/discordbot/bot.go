@@ -108,14 +108,8 @@ func (b *Bot) interactionHandler(session *discordgo.Session, event *discordgo.In
 	switch event.ApplicationCommandData().Name {
 	case "ping":
 		b.handlePing(session, event)
-	case "subs":
-		b.handleSubs(session, event)
-	case "results":
-		b.handleResults(session, event)
-	case "domains":
-		b.handleDomains(session, event)
-	case "ips":
-		b.handleIPs(session, event)
+	case "scan":
+		b.handleScan(session, event)
 	case "add":
 		b.handleAdd(session, event)
 	case "get":

@@ -17,30 +17,24 @@ import (
 
 const maxTargetsFileBytes = 8 << 20
 
-func (b *Bot) handleIPs(session *discordgo.Session, event *discordgo.InteractionCreate) {
-	if event.Member == nil || event.Member.User == nil || event.Member.Permissions&discordgo.PermissionAdministrator == 0 {
-		if err := respond(session, event, "Only server administrators can use `/ips`.", true); err != nil {
-			log.Printf("reject /ips: %v", err)
-		}
-		return
-	}
-
+func (b *Bot) handleIPs(session *discordgo.Session, event *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
 	data := event.ApplicationCommandData()
-	inline, hasInline := stringOption(data.Options, "targets")
+	data.Options = options
+	inline, hasInline := stringOption(options, "targets")
 	attachment, hasAttachment := attachmentOption(data, "file")
 	if hasInline == hasAttachment {
 		if err := respond(session, event, "Provide exactly one of `targets` or `file`.", true); err != nil {
-			log.Printf("validate /ips input options: %v", err)
+			log.Printf("validate /scan ips input options: %v", err)
 		}
 		return
 	}
-	ports, _ := stringOption(data.Options, "ports")
+	ports, _ := stringOption(options, "ports")
 
 	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{Flags: discordgo.MessageFlagsEphemeral},
 	}); err != nil {
-		log.Printf("defer /ips response: %v", err)
+		log.Printf("defer /scan ips response: %v", err)
 		return
 	}
 
@@ -65,7 +59,7 @@ func (b *Bot) handleIPs(session *discordgo.Session, event *discordgo.Interaction
 
 	acknowledgement := fmt.Sprintf("IP scan started with %d target entries.", len(targets))
 	if _, err := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &acknowledgement}); err != nil {
-		log.Printf("acknowledge /ips: %v", err)
+		log.Printf("acknowledge /scan ips: %v", err)
 		return
 	}
 
@@ -83,13 +77,13 @@ func (b *Bot) runIPs(ctx context.Context, session *discordgo.Session, channelID,
 		return
 	}
 	if err != nil {
-		log.Printf("run /ips: %v", err)
+		log.Printf("run /scan ips: %v", err)
 		content := fmt.Sprintf("<@%s> IP scan failed. Review the bot logs.", userID)
 		if result.RunID != 0 {
 			content = fmt.Sprintf("<@%s> IP scan stopped. Partial scan data was saved in SQLite.", userID)
 		}
 		if _, sendErr := session.ChannelMessageSend(channelID, content); sendErr != nil {
-			log.Printf("report /ips failure: %v", sendErr)
+			log.Printf("report /scan ips failure: %v", sendErr)
 		}
 		return
 	}
@@ -100,7 +94,7 @@ func (b *Bot) runIPs(ctx context.Context, session *discordgo.Session, channelID,
 			{Name: ipscan.ResultsFilename, ContentType: "text/plain; charset=utf-8", Reader: strings.NewReader(result.Output)},
 		},
 	}); err != nil {
-		log.Printf("publish /ips results: %v", err)
+		log.Printf("publish /scan ips results: %v", err)
 	}
 }
 

@@ -1,6 +1,6 @@
 # Discord bot in Go
 
-A Discord bot built with [DiscordGo](https://github.com/bwmarrin/discordgo), Subfinder, HTTPX, and Caduceus. It provides `/ping` plus administrator-only `/subs`, `/ips`, `/results`, `/domains`, `/add`, and `/get` commands.
+A Discord bot built with [DiscordGo](https://github.com/bwmarrin/discordgo), Subfinder, HTTPX, and Caduceus. It provides `/ping` plus administrator-only `/scan`, `/add`, and `/get` commands.
 
 ## 1. Create the Discord application
 
@@ -19,7 +19,7 @@ The bot loads `.env` automatically during local development. Environment variabl
 
 `DISCORD_GUILD_ID` is optional, but guild commands appear immediately and are best during development. If omitted, commands are registered globally and may take longer to appear.
 
-The bot consolidates passive results from Subfinder, Shosubgo/Shodan, and GitHub Subdomains. Subfinder always runs with every source (`subfinder -all`). Set `SUBFINDER_PROVIDER_CONFIG` to your provider key YAML; its `github` and `shodan` entries enable the additional adapters. Without those keys, the corresponding adapters are skipped. New `/subs` and `/ips` runs are stored as normalized rows in SQLite. `DATABASE_PATH` controls its location and defaults to `data/recon.db`.
+The bot consolidates passive results from Subfinder, Shosubgo/Shodan, and GitHub Subdomains. Subfinder always runs with every source (`subfinder -all`). Set `SUBFINDER_PROVIDER_CONFIG` to your provider key YAML; its `github` and `shodan` entries enable the additional adapters. Without those keys, the corresponding adapters are skipped. New `/scan subs` and `/scan ips` runs are stored as normalized rows in SQLite. `DATABASE_PATH` controls its location and defaults to `data/recon.db`.
 
 ### Optional PureDNS brute forcing
 
@@ -48,19 +48,19 @@ docker run --rm --entrypoint caduceus discord-puredns:2.1.1 -h
 docker run --rm --entrypoint caduceus discord-puredns:2.1.1 -i 192.0.2.10 -p 443
 ```
 
-The `/ips` command runs Caduceus in the background. For a small input, pass comma- or space-separated IPv4 addresses and CIDRs directly:
+The `/scan ips` command runs Caduceus in the background. For a small input, pass comma- or space-separated IPv4 addresses and CIDRs directly:
 
 ```text
-/ips targets:192.0.2.10,198.51.100.0/28 ports:443,8443
+/scan ips targets:192.0.2.10,198.51.100.0/28 ports:443,8443
 ```
 
 For large inputs, attach a text file with one IPv4 address or CIDR per line:
 
 ```text
-/ips file:targets.txt ports:443,8443
+/scan ips file:targets.txt ports:443,8443
 ```
 
-Choose exactly one of `targets` and `file`. Attachments are limited to 8 MiB, validated before the job starts, and streamed to the container over stdin. Caduceus currently handles IPv4 targets; IPv6 input is rejected instead of being passed in a format the upstream tool cannot scan correctly. `/ips` publishes `caduceus_results.txt` when complete and saves its inputs in `ip_targets` and discoveries in `ip_domains`. Failed runs retain any rows completed before the failure. Only one Caduceus job runs at a time. IP runs remain separate from `/results` and `/domains`.
+Choose exactly one of `targets` and `file`. Attachments are limited to 8 MiB, validated before the job starts, and streamed to the container over stdin. Caduceus currently handles IPv4 targets; IPv6 input is rejected instead of being passed in a format the upstream tool cannot scan correctly. `/scan ips` publishes `caduceus_results.txt` when complete and saves its inputs in `ip_targets` and discoveries in `ip_domains`. Failed runs retain any rows completed before the failure. Only one Caduceus job runs at a time. IP runs remain separate from `/get scans` and `/get roots`.
 
 Use only against domains and address ranges you are authorized to test. Public resolvers change over time; curate your own resolver file when reliability matters and choose a responsible rate limit.
 
@@ -71,11 +71,11 @@ go mod tidy
 go run .
 ```
 
-In your Discord test server, enter `/ping`, `/subs domain:example.com`, `/results domain:example.com`, or `/domains`. Use `/results domain:example.com urls:true` to receive a `urls.txt` attachment containing only sorted, unique HTTP(S) URLs from the latest saved scan. `/results domain:*` combines every completed scan, while a wildcard such as `/results domain:*example.com` combines every completed scan whose root domain matches; either form can also use `urls:true`. `/domains` publishes a unique, sorted list of all root domains represented in the saved scan history. Successful `/results` and `/domains` responses are visible to everyone in the channel. Only server administrators can use the data and discovery commands, and you should only scan domains and address ranges you own or are authorized to assess. Stop the bot with `Ctrl+C`.
+In your Discord test server, enter `/ping`, `/scan subs domain:example.com`, `/get scans domain:example.com`, or `/get roots`. Use `/get scans domain:example.com urls:true` to receive a `urls.txt` attachment containing only sorted, unique HTTP(S) URLs from the latest saved scan. `/get scans domain:*` combines every completed scan, while a wildcard such as `/get scans domain:*example.com` combines every completed scan whose root domain matches; either form can also use `urls:true`. `/get roots` publishes a unique, sorted list of all root domains represented in the saved scan history. Successful `/get` responses are visible to everyone in the channel. Only server administrators can use the data and discovery commands, and you should only scan domains and address ranges you own or are authorized to assess. Stop the bot with `Ctrl+C`.
 
-Use `/add data:<value>` to place a single-line value in the bot's standalone shared storage. The optional `description` field adds context, and adding the same value again updates its description without creating a duplicate. `/get` publishes every manually stored value in `data.txt` without descriptions. Use `/get descriptions:true` to append descriptions as `value — description`. This storage is intentionally isolated from `/subs`, `/ips`, `/results`, and `/domains`.
+Use `/add data:<value>` to place a single-line value in the bot's standalone shared storage. The optional `description` field adds context, and adding the same value again updates its description without creating a duplicate. `/get storage` publishes every manually stored value in `data.txt` without descriptions. Use `/get storage descriptions:true` to append descriptions as `value — description`. This storage is intentionally isolated from `/scan subs`, `/scan ips`, `/get scans`, and `/get roots`.
 
-`/subs` acknowledges immediately, runs in the background without an interaction timeout, and sends `httpx_results.txt` to the channel or your DMs when finished. Up to two scans run concurrently. Each scan performs consolidated passive discovery, optionally adds PureDNS brute-force results when enabled and below the passive threshold, validates the merged names through DNSX with 50 workers, and sends only names with an A or AAAA record to HTTPX. HTTPX probes ports `80`, `443`, `8443`, `8444`, `8080`, `3000`, and `5000` with 20 workers and normal HTTP/HTTPS fallback behavior. When both ports 80 and 443 respond for the same hostname, only the port 443 result is retained; results from the other configured ports remain untouched. Each run also creates:
+`/scan subs` acknowledges immediately, runs in the background without an interaction timeout, and sends `httpx_results.txt` to the channel or your DMs when finished. Up to two scans run concurrently. Each scan performs consolidated passive discovery, optionally adds PureDNS brute-force results when enabled and below the passive threshold, validates the merged names through DNSX with 50 workers, and sends only names with an A or AAAA record to HTTPX. HTTPX probes ports `80`, `443`, `8443`, `8444`, `8080`, `3000`, and `5000` with 20 workers and normal HTTP/HTTPS fallback behavior. When both ports 80 and 443 respond for the same hostname, only the port 443 result is retained; results from the other configured ports remain untouched. Each run also creates:
 
 ```text
 passive_subdomains.txt
@@ -90,11 +90,11 @@ These filenames describe the Discord attachments generated from normalized datab
 ### SQLite tables
 
 - `runs` stores scan type, root domain, timestamp, status, error, and legacy source path.
-- `subdomains` stores one hostname per `/subs` run with passive, bruteforced, and resolved flags.
+- `subdomains` stores one hostname per `/scan subs` run with passive, bruteforced, and resolved flags.
 - `http_probes` stores one HTTPX endpoint per row with its URL, status, title, server, IPs, technologies, redirect, content metadata, and display output.
-- `ip_targets` stores each IP address or CIDR passed to `/ips`.
+- `ip_targets` stores each IP address or CIDR passed to `/scan ips`.
 - `ip_domains` stores each unique domain returned by Caduceus for an IP scan.
-- `stored_items` stores values submitted manually through `/add` and is the only table read by `/get`.
+- `stored_items` stores values submitted manually through `/add` and is the only table read by `/get storage`.
 
 ### Import legacy result folders
 
@@ -104,7 +104,7 @@ Import an existing results directory with:
 go run . migrate /path/to/results
 ```
 
-The importer recognizes both `timestamp_domain/` and `timestamp_ips/` directories, preserves their timestamps and exact artifact contents, and records the absolute source directory. Running the same command again safely skips already imported directories. It never modifies or deletes the original files, so keep them until you have verified the migrated `/results` and `/domains` output.
+The importer recognizes both `timestamp_domain/` and `timestamp_ips/` directories, preserves their timestamps and exact artifact contents, and records the absolute source directory. Running the same command again safely skips already imported directories. It never modifies or deletes the original files, so keep them until you have verified the migrated `/get scans` and `/get roots` output.
 
 ## Project layout
 

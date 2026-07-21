@@ -53,7 +53,29 @@ func (b *Bot) handleGet(session *discordgo.Session, event *discordgo.Interaction
 		}
 		return
 	}
+	options := event.ApplicationCommandData().Options
+	if len(options) != 1 || options[0].Type != discordgo.ApplicationCommandOptionSubCommand {
+		if err := respond(session, event, "Choose one of `/get storage`, `/get scans`, or `/get roots`.", true); err != nil {
+			log.Printf("validate /get subcommand: %v", err)
+		}
+		return
+	}
+	subcommand := options[0]
+	switch subcommand.Name {
+	case "storage":
+		b.handleStorageGet(session, event, subcommand.Options)
+	case "scans":
+		b.handleGetScans(session, event, subcommand.Options)
+	case "roots":
+		b.handleGetRoots(session, event)
+	default:
+		if err := respond(session, event, "Unknown `/get` subcommand.", true); err != nil {
+			log.Printf("reject unknown /get subcommand: %v", err)
+		}
+	}
+}
 
+func (b *Bot) handleStorageGet(session *discordgo.Session, event *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
 	items, err := b.dataStore.StoredItems(b.context())
 	if err != nil {
 		log.Printf("read /get data: %v", err)
@@ -69,7 +91,7 @@ func (b *Bot) handleGet(session *discordgo.Session, event *discordgo.Interaction
 		return
 	}
 
-	includeDescriptions := booleanOption(event.ApplicationCommandData().Options, "descriptions")
+	includeDescriptions := booleanOption(options, "descriptions")
 	contents := renderStoredItems(items, includeDescriptions)
 	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
