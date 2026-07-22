@@ -4,31 +4,40 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
+	"path/filepath"
+	"strings"
 
-	"discord-bot/internal/config"
-	"discord-bot/internal/database"
-	"discord-bot/internal/discordbot"
-	"discord-bot/internal/migration"
-	"discord-bot/internal/modules/dnsbruteforce"
-	"discord-bot/internal/modules/dnsvalidate"
-	"discord-bot/internal/modules/httpprobe"
-	"discord-bot/internal/modules/ipscan"
-	"discord-bot/internal/modules/subdomains"
-	"discord-bot/internal/recon"
-	"discord-bot/internal/scanqueue"
+	"github.com/Unit-8200/recon-bot/internal/config"
+	"github.com/Unit-8200/recon-bot/internal/database"
+	"github.com/Unit-8200/recon-bot/internal/discordbot"
+	"github.com/Unit-8200/recon-bot/internal/migration"
+	"github.com/Unit-8200/recon-bot/internal/modules/dnsbruteforce"
+	"github.com/Unit-8200/recon-bot/internal/modules/dnsvalidate"
+	"github.com/Unit-8200/recon-bot/internal/modules/httpprobe"
+	"github.com/Unit-8200/recon-bot/internal/modules/ipscan"
+	"github.com/Unit-8200/recon-bot/internal/modules/subdomains"
+	"github.com/Unit-8200/recon-bot/internal/recon"
+	"github.com/Unit-8200/recon-bot/internal/scanqueue"
 )
 
-// Run builds the application's dependencies and runs until ctx is cancelled.
-func Run(ctx context.Context) error {
-	cfg, err := config.Load()
+// Run builds the application's dependencies from configPath and runs until ctx is cancelled.
+func Run(ctx context.Context, configPath string) error {
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
+	}
+	if copied, copyErr := database.CopyIfMissing(ctx, cfg.LegacyDatabasePath, cfg.DatabasePath); copyErr != nil {
+		return fmt.Errorf("relocate repository database: %w", copyErr)
+	} else if copied {
+		log.Printf("copied legacy database to persistent path %s", cfg.DatabasePath)
 	}
 	store, err := database.Open(cfg.DatabasePath)
 	if err != nil {
 		return fmt.Errorf("initialize database: %w", err)
 	}
 	defer store.Close()
+	log.Printf("using SQLite database %s", cfg.DatabasePath)
 
 	finder, err := subdomains.NewFinderWithOptions(subdomains.FinderOptions{
 		ProviderConfig: cfg.SubfinderProviderConfig,
@@ -49,8 +58,6 @@ func Run(ctx context.Context) error {
 	if cfg.PureDNSEnabled {
 		bruteforcer, pureDNSErr := dnsbruteforce.NewPureDNS(dnsbruteforce.Options{
 			Image:     cfg.PureDNSImage,
-			Wordlist:  cfg.PureDNSWordlist,
-			Resolvers: cfg.PureDNSResolvers,
 			RateLimit: cfg.PureDNSRateLimit,
 			Timeout:   cfg.PureDNSTimeout,
 		})
@@ -82,16 +89,34 @@ func Run(ctx context.Context) error {
 	return bot.Run(ctx)
 }
 
-// Migrate imports legacy filesystem runs into the configured SQLite database.
-func Migrate(ctx context.Context, folder string) (migration.Report, error) {
-	databasePath, err := config.LoadDatabasePath()
+// Migrate additively imports a legacy results folder or previous SQLite
+// database into the configured database.
+func Migrate(ctx context.Context, configPath string, source migration.Source) (migration.Report, error) {
+	databasePath, legacyDatabasePath, err := config.LoadDatabasePaths(configPath)
 	if err != nil {
 		return migration.Report{}, err
+	}
+	// When the explicitly selected database is also the legacy repository
+	// database, import it normally instead of first copying it byte-for-byte.
+	// That gives its native runs stable import identities for future reruns.
+	if source.Database == "" || !samePath(source.Database, legacyDatabasePath) {
+		if copied, copyErr := database.CopyIfMissing(ctx, legacyDatabasePath, databasePath); copyErr != nil {
+			return migration.Report{}, fmt.Errorf("relocate repository database: %w", copyErr)
+		} else if copied {
+			log.Printf("copied legacy database to persistent path %s", databasePath)
+		}
 	}
 	store, err := database.Open(databasePath)
 	if err != nil {
 		return migration.Report{}, fmt.Errorf("initialize database: %w", err)
 	}
 	defer store.Close()
-	return migration.Results(ctx, store, folder)
+	log.Printf("using SQLite database %s", databasePath)
+	return migration.Import(ctx, store, source)
+}
+
+func samePath(left, right string) bool {
+	left, leftErr := filepath.Abs(strings.TrimSpace(left))
+	right, rightErr := filepath.Abs(strings.TrimSpace(right))
+	return leftErr == nil && rightErr == nil && left == right
 }

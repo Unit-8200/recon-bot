@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"discord-bot/internal/scanqueue"
+	"github.com/Unit-8200/recon-bot/internal/scanqueue"
 )
 
 func TestRenderQueue(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"log"
 	"strings"
 
-	"discord-bot/internal/database"
+	"github.com/Unit-8200/recon-bot/internal/database"
 
 	"github.com/bwmarrin/discordgo"
 )

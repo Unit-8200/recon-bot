@@ -13,13 +13,8 @@ import (
 func TestPureDNSBruteforceBuildsContainerCommandAndParsesOutput(t *testing.T) {
 	t.Parallel()
 
-	directory := t.TempDir()
-	wordlist := writeFixture(t, directory, "words.txt", "www\napi\n")
-	resolvers := writeFixture(t, directory, "resolvers.txt", "1.1.1.1\n")
 	adapter, err := NewPureDNS(Options{
 		Image:      "test-puredns:2.1.1",
-		Wordlist:   wordlist,
-		Resolvers:  resolvers,
 		RateLimit:  1234,
 		Timeout:    time.Minute,
 		DockerPath: "/test/docker",
@@ -47,7 +42,7 @@ func TestPureDNSBruteforceBuildsContainerCommandAndParsesOutput(t *testing.T) {
 	for _, expected := range []string{
 		"run --rm",
 		"--user",
-		"test-puredns:2.1.1 bruteforce /data/wordlist.txt example.com",
+		"test-puredns:2.1.1 bruteforce /data/n0kovo_subdomains_huge.txt example.com",
 		"--resolvers /data/resolvers.txt",
 		"--wildcard-batch 1000000",
 		"--rate-limit 1234",
@@ -56,6 +51,9 @@ func TestPureDNSBruteforceBuildsContainerCommandAndParsesOutput(t *testing.T) {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("command args %q do not contain %q", joined, expected)
 		}
+	}
+	if strings.Contains(joined, "--mount") {
+		t.Fatalf("production PureDNS command unexpectedly mounts host data: %q", joined)
 	}
 	want := []string{"www.example.com", "api.example.com"}
 	if !reflect.DeepEqual(values, want) {

@@ -1,15 +1,15 @@
-module discord-bot
+module github.com/Unit-8200/recon-bot
 
 go 1.26
 
 require (
 	github.com/bwmarrin/discordgo v0.29.0
-	github.com/joho/godotenv v1.5.1
 	github.com/miekg/dns v1.1.68
 	github.com/projectdiscovery/dnsx v1.2.3
 	github.com/projectdiscovery/goflags v0.1.74
 	github.com/projectdiscovery/httpx v1.7.2
 	github.com/projectdiscovery/subfinder/v2 v2.14.0
+	github.com/spf13/cobra v1.10.2
 	github.com/xuri/excelize/v2 v2.11.0
 	golang.org/x/net v0.56.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -76,6 +76,7 @@ require (
 	github.com/hbakhtiyor/strsim v0.0.0-20190107154042-4d2bbb273edf // indirect
 	github.com/hdm/jarm-go v0.0.7 // indirect
 	github.com/iangcarroll/cookiemonster v1.6.0 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kataras/jwt v0.1.10 // indirect
 	github.com/klauspost/compress v1.18.2 // indirect
@@ -141,6 +142,7 @@ require (
 	github.com/sorairolake/lzip-go v0.3.8 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
+	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/syndtr/goleveldb v1.0.0 // indirect
 	github.com/tidwall/btree v1.7.0 // indirect
 	github.com/tidwall/buntdb v1.3.1 // indirect

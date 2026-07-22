@@ -89,7 +89,8 @@ type ImportData struct {
 
 // Store wraps the application's SQLite database.
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 }
 
 // Open creates or opens a database and applies its schema.
@@ -112,10 +113,14 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	store := &Store{db: db}
+	store := &Store{db: db, path: absolute}
 	if err := store.initialize(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	if err := os.Chmod(absolute, 0o600); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("protect SQLite database: %w", err)
 	}
 	return store, nil
 }
@@ -199,6 +204,9 @@ func (s *Store) initialize(ctx context.Context) error {
 
 // Close closes the underlying database.
 func (s *Store) Close() error { return s.db.Close() }
+
+// Path returns the absolute path of the open SQLite database.
+func (s *Store) Path() string { return s.path }
 
 // CreateRun inserts a new live scan.
 func (s *Store) CreateRun(ctx context.Context, kind, domain string, startedAt time.Time) (int64, error) {

@@ -8,8 +8,8 @@ import (
 	"log"
 	"strings"
 
-	"discord-bot/internal/recon"
-	"discord-bot/internal/scanqueue"
+	"github.com/Unit-8200/recon-bot/internal/recon"
+	"github.com/Unit-8200/recon-bot/internal/scanqueue"
 
 	"github.com/bwmarrin/discordgo"
 )

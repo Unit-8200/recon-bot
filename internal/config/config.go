@@ -1,15 +1,26 @@
-// Package config loads and validates application configuration.
+// Package config loads and validates the bot's YAML configuration.
 package config
 
 import (
-	"errors"
 	"fmt"
+	"io"
 	"os"
-	"strconv"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	defaultImage               = "discord-puredns:2.1.1"
+	defaultPassiveThreshold    = 1000
+	defaultPureDNSRateLimit    = 5000
+	defaultPureDNSTimeout      = 2 * time.Hour
+	defaultCaduceusTimeout     = 4 * time.Hour
+	persistentDirectoryName    = "recon-bot"
+	persistentDatabaseName     = "recon.db"
+	legacyDatabaseRelativePath = "data/recon.db"
 )
 
 // Config contains the settings needed to assemble the application.
@@ -18,10 +29,9 @@ type Config struct {
 	DiscordGuildID          string
 	SubfinderProviderConfig string
 	DatabasePath            string
+	LegacyDatabasePath      string
 	PureDNSEnabled          bool
 	PureDNSImage            string
-	PureDNSWordlist         string
-	PureDNSResolvers        string
 	PureDNSPassiveThreshold int
 	PureDNSRateLimit        int
 	PureDNSTimeout          time.Duration
@@ -29,110 +39,189 @@ type Config struct {
 	CaduceusTimeout         time.Duration
 }
 
-// Load reads an optional local .env file and then loads configuration from the
-// environment. Existing environment variables take precedence over .env.
-func Load() (Config, error) {
-	if err := loadEnv(); err != nil {
-		return Config{}, err
-	}
+type fileConfig struct {
+	Discord struct {
+		Token   string `yaml:"token"`
+		GuildID string `yaml:"guild_id"`
+	} `yaml:"discord"`
+	Database struct {
+		Path string `yaml:"path"`
+	} `yaml:"database"`
+	Subfinder struct {
+		ProviderConfig string `yaml:"provider_config"`
+	} `yaml:"subfinder"`
+	PureDNS struct {
+		Enabled          bool   `yaml:"enabled"`
+		Image            string `yaml:"image"`
+		PassiveThreshold *int   `yaml:"passive_threshold"`
+		RateLimit        *int   `yaml:"rate_limit"`
+		Timeout          string `yaml:"timeout"`
+	} `yaml:"puredns"`
+	Caduceus struct {
+		Image   string `yaml:"image"`
+		Timeout string `yaml:"timeout"`
+	} `yaml:"caduceus"`
+}
 
-	pureDNSEnabled, err := parseBool("PUREDNS_ENABLED", false)
+// Load reads a YAML file and validates the complete runtime configuration.
+func Load(path string) (Config, error) {
+	config, err := load(path)
 	if err != nil {
 		return Config{}, err
-	}
-	pureDNSThreshold, err := parseNonNegativeInt("PUREDNS_PASSIVE_THRESHOLD", 1000)
-	if err != nil {
-		return Config{}, err
-	}
-	pureDNSRateLimit, err := parseNonNegativeInt("PUREDNS_RATE_LIMIT", 5000)
-	if err != nil {
-		return Config{}, err
-	}
-	pureDNSTimeout, err := parseDuration("PUREDNS_TIMEOUT", 2*time.Hour)
-	if err != nil {
-		return Config{}, err
-	}
-	caduceusTimeout, err := parseDuration("CADUCEUS_TIMEOUT", 4*time.Hour)
-	if err != nil {
-		return Config{}, err
-	}
-	pureDNSImage := envOrDefault("PUREDNS_IMAGE", "discord-puredns:2.1.1")
-
-	config := Config{
-		DiscordToken:            strings.TrimSpace(os.Getenv("DISCORD_TOKEN")),
-		DiscordGuildID:          strings.TrimSpace(os.Getenv("DISCORD_GUILD_ID")),
-		SubfinderProviderConfig: strings.TrimSpace(os.Getenv("SUBFINDER_PROVIDER_CONFIG")),
-		DatabasePath:            envOrDefault("DATABASE_PATH", "data/recon.db"),
-		PureDNSEnabled:          pureDNSEnabled,
-		PureDNSImage:            pureDNSImage,
-		PureDNSWordlist:         envOrDefault("PUREDNS_WORDLIST", "data/puredns/n0kovo_subdomains_huge.txt"),
-		PureDNSResolvers:        envOrDefault("PUREDNS_RESOLVERS", "data/puredns/resolvers.txt"),
-		PureDNSPassiveThreshold: pureDNSThreshold,
-		PureDNSRateLimit:        pureDNSRateLimit,
-		PureDNSTimeout:          pureDNSTimeout,
-		CaduceusImage:           envOrDefault("CADUCEUS_IMAGE", pureDNSImage),
-		CaduceusTimeout:         caduceusTimeout,
 	}
 	if config.DiscordToken == "" {
-		return Config{}, fmt.Errorf("DISCORD_TOKEN is required")
+		return Config{}, fmt.Errorf("discord.token is required")
 	}
 	return config, nil
 }
 
-// LoadDatabasePath loads only the settings required by offline database commands.
-func LoadDatabasePath() (string, error) {
-	if err := loadEnv(); err != nil {
+// LoadDatabasePaths reads only the paths needed by offline migration commands.
+func LoadDatabasePaths(path string) (string, string, error) {
+	config, err := load(path)
+	if err != nil {
+		return "", "", err
+	}
+	return config.DatabasePath, config.LegacyDatabasePath, nil
+}
+
+func load(path string) (Config, error) {
+	configPath, err := filepath.Abs(strings.TrimSpace(path))
+	if err != nil || strings.TrimSpace(path) == "" {
+		return Config{}, fmt.Errorf("configuration file path is required")
+	}
+	file, err := os.Open(configPath)
+	if err != nil {
+		return Config{}, fmt.Errorf("open configuration file %s: %w", configPath, err)
+	}
+	defer file.Close()
+
+	var raw fileConfig
+	decoder := yaml.NewDecoder(file)
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&raw); err != nil {
+		return Config{}, fmt.Errorf("decode configuration file %s: %w", configPath, err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return Config{}, fmt.Errorf("configuration file %s contains multiple YAML documents", configPath)
+		}
+		return Config{}, fmt.Errorf("decode configuration file %s: %w", configPath, err)
+	}
+
+	baseDirectory := filepath.Dir(configPath)
+	databasePath, legacyDatabasePath, err := databasePaths(baseDirectory, raw.Database.Path)
+	if err != nil {
+		return Config{}, err
+	}
+	providerConfig, err := optionalPath(baseDirectory, raw.Subfinder.ProviderConfig)
+	if err != nil {
+		return Config{}, fmt.Errorf("resolve subfinder.provider_config: %w", err)
+	}
+	threshold := defaultPassiveThreshold
+	if raw.PureDNS.PassiveThreshold != nil {
+		threshold = *raw.PureDNS.PassiveThreshold
+	}
+	if threshold < 0 {
+		return Config{}, fmt.Errorf("puredns.passive_threshold must be non-negative")
+	}
+	rateLimit := defaultPureDNSRateLimit
+	if raw.PureDNS.RateLimit != nil {
+		rateLimit = *raw.PureDNS.RateLimit
+	}
+	if rateLimit < 0 {
+		return Config{}, fmt.Errorf("puredns.rate_limit must be non-negative")
+	}
+	pureDNSTimeout, err := duration(raw.PureDNS.Timeout, defaultPureDNSTimeout, "puredns.timeout")
+	if err != nil {
+		return Config{}, err
+	}
+	caduceusTimeout, err := duration(raw.Caduceus.Timeout, defaultCaduceusTimeout, "caduceus.timeout")
+	if err != nil {
+		return Config{}, err
+	}
+	pureDNSImage := valueOrDefault(raw.PureDNS.Image, defaultImage)
+
+	return Config{
+		DiscordToken:            strings.TrimSpace(raw.Discord.Token),
+		DiscordGuildID:          strings.TrimSpace(raw.Discord.GuildID),
+		SubfinderProviderConfig: providerConfig,
+		DatabasePath:            databasePath,
+		LegacyDatabasePath:      legacyDatabasePath,
+		PureDNSEnabled:          raw.PureDNS.Enabled,
+		PureDNSImage:            pureDNSImage,
+		PureDNSPassiveThreshold: threshold,
+		PureDNSRateLimit:        rateLimit,
+		PureDNSTimeout:          pureDNSTimeout,
+		CaduceusImage:           valueOrDefault(raw.Caduceus.Image, pureDNSImage),
+		CaduceusTimeout:         caduceusTimeout,
+	}, nil
+}
+
+func databasePaths(baseDirectory, configured string) (string, string, error) {
+	configured = strings.TrimSpace(configured)
+	if configured != "" {
+		path, err := resolvePath(baseDirectory, configured)
+		return path, "", err
+	}
+	configDirectory, err := os.UserConfigDir()
+	if err != nil {
+		return "", "", fmt.Errorf("find user configuration directory: %w", err)
+	}
+	legacy, err := filepath.Abs(filepath.FromSlash(legacyDatabaseRelativePath))
+	if err != nil {
+		return "", "", fmt.Errorf("resolve legacy database path: %w", err)
+	}
+	return filepath.Join(configDirectory, persistentDirectoryName, persistentDatabaseName), legacy, nil
+}
+
+func optionalPath(baseDirectory, value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", nil
+	}
+	return resolvePath(baseDirectory, value)
+}
+
+func resolvePath(baseDirectory, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if value == "~" || strings.HasPrefix(value, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("find user home directory: %w", err)
+		}
+		if value == "~" {
+			return home, nil
+		}
+		value = filepath.Join(home, strings.TrimPrefix(value, "~/"))
+	}
+	if !filepath.IsAbs(value) {
+		value = filepath.Join(baseDirectory, value)
+	}
+	path, err := filepath.Abs(value)
+	if err != nil {
 		return "", err
 	}
-	return envOrDefault("DATABASE_PATH", "data/recon.db"), nil
+	return filepath.Clean(path), nil
 }
 
-func loadEnv() error {
-	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("load .env: %w", err)
-	}
-	return nil
-}
-
-func envOrDefault(name, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func parseBool(name string, fallback bool) (bool, error) {
-	value := strings.TrimSpace(os.Getenv(name))
-	if value == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.ParseBool(value)
-	if err != nil {
-		return false, fmt.Errorf("%s must be true or false: %w", name, err)
-	}
-	return parsed, nil
-}
-
-func parseNonNegativeInt(name string, fallback int) (int, error) {
-	value := strings.TrimSpace(os.Getenv(name))
-	if value == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil || parsed < 0 {
-		return 0, fmt.Errorf("%s must be a non-negative integer", name)
-	}
-	return parsed, nil
-}
-
-func parseDuration(name string, fallback time.Duration) (time.Duration, error) {
-	value := strings.TrimSpace(os.Getenv(name))
+func duration(value string, fallback time.Duration, name string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
 	if value == "" {
 		return fallback, nil
 	}
 	parsed, err := time.ParseDuration(value)
 	if err != nil || parsed <= 0 {
-		return 0, fmt.Errorf("%s must be a positive Go duration such as 2h", name)
+		return 0, fmt.Errorf("%s must be a positive duration such as 2h", name)
 	}
 	return parsed, nil
+}
+
+func valueOrDefault(value, fallback string) string {
+	if value = strings.TrimSpace(value); value != "" {
+		return value
+	}
+	return fallback
 }

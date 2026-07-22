@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"discord-bot/internal/database"
+	"github.com/Unit-8200/recon-bot/internal/database"
 )
 
 // Kind identifies the workflow used by a queue job.

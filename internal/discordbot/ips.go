@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"discord-bot/internal/modules/ipscan"
-	"discord-bot/internal/scanqueue"
+	"github.com/Unit-8200/recon-bot/internal/modules/ipscan"
+	"github.com/Unit-8200/recon-bot/internal/scanqueue"
 
 	"github.com/bwmarrin/discordgo"
 )

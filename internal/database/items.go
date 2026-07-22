@@ -53,6 +53,48 @@ func (s *Store) AddStoredItem(ctx context.Context, data, description string) (bo
 	return created, nil
 }
 
+// ImportStoredItem adds one item from another database while preserving its
+// creation time. Existing destination data wins, except that an empty
+// destination description may be filled from the source.
+func (s *Store) ImportStoredItem(ctx context.Context, item StoredItem) (bool, error) {
+	item.Data = strings.TrimSpace(item.Data)
+	if item.Data == "" {
+		return false, fmt.Errorf("data is required")
+	}
+	if strings.ContainsAny(item.Data, "\r\n") {
+		return false, fmt.Errorf("data must be a single line")
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = time.Now().UTC()
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin stored item import: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO stored_items(data, description, created_at)
+		VALUES(?, ?, ?)`, item.Data, item.Description, item.CreatedAt.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return false, fmt.Errorf("import stored item: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check stored item import: %w", err)
+	}
+	created := changed > 0
+	if !created && item.Description != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE stored_items SET description = ?
+			WHERE data = ? AND description = ''`, item.Description, item.Data); err != nil {
+			return false, fmt.Errorf("merge stored item description: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit stored item import: %w", err)
+	}
+	return created, nil
+}
+
 // StoredItems returns every manually submitted item in insertion order.
 func (s *Store) StoredItems(ctx context.Context) ([]StoredItem, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, data, description, created_at FROM stored_items ORDER BY id`)

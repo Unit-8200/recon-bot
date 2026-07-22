@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	"discord-bot/internal/scanqueue"
+	"github.com/Unit-8200/recon-bot/internal/scanqueue"
 
 	"github.com/bwmarrin/discordgo"
 )

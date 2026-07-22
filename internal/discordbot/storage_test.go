@@ -3,7 +3,7 @@ package discordbot
 import (
 	"testing"
 
-	"discord-bot/internal/database"
+	"github.com/Unit-8200/recon-bot/internal/database"
 )
 
 func TestRenderStoredItems(t *testing.T) {

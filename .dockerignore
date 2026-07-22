@@ -1,9 +1,12 @@
 .git
 .env
-data
+data/*
+!data/puredns/
+data/puredns/*
+!data/puredns/n0kovo_subdomains_huge.txt
+!data/puredns/resolvers.txt
 results
 secrets
 subfinder.yaml
 github-subdomains
 shosubgo
-

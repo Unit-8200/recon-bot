@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"log"
 
-	"discord-bot/internal/database"
-	"discord-bot/internal/modules/ipscan"
-	"discord-bot/internal/recon"
-	"discord-bot/internal/scanqueue"
+	"github.com/Unit-8200/recon-bot/internal/database"
+	"github.com/Unit-8200/recon-bot/internal/modules/ipscan"
+	"github.com/Unit-8200/recon-bot/internal/recon"
+	"github.com/Unit-8200/recon-bot/internal/scanqueue"
 
 	"github.com/bwmarrin/discordgo"
 )

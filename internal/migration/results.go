@@ -10,19 +10,21 @@ import (
 	"strings"
 	"time"
 
-	"discord-bot/internal/database"
-	"discord-bot/internal/modules/ipscan"
-	"discord-bot/internal/modules/subdomains"
-	"discord-bot/internal/recon"
+	"github.com/Unit-8200/recon-bot/internal/database"
+	"github.com/Unit-8200/recon-bot/internal/modules/ipscan"
+	"github.com/Unit-8200/recon-bot/internal/modules/subdomains"
+	"github.com/Unit-8200/recon-bot/internal/recon"
 )
 
 const legacyTimestampLayout = "20060102T150405.000Z"
 
-// Report summarizes one directory migration.
+// Report summarizes one additive migration.
 type Report struct {
-	Imported int
-	Skipped  int
-	Ignored  int
+	Imported      int
+	Skipped       int
+	Ignored       int
+	ItemsImported int
+	ItemsSkipped  int
 }
 
 // Results imports every recognizable legacy run below folder. Source paths are

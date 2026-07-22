@@ -39,6 +39,8 @@ RUN apt-get update \
 COPY --from=puredns-builder /out/puredns /usr/local/bin/puredns
 COPY --from=massdns-builder /src/massdns/bin/massdns /usr/local/bin/massdns
 COPY --from=caduceus-builder /out/caduceus /usr/local/bin/caduceus
+COPY --chown=puredns:puredns data/puredns/n0kovo_subdomains_huge.txt /data/n0kovo_subdomains_huge.txt
+COPY --chown=puredns:puredns data/puredns/resolvers.txt /data/resolvers.txt
 
 USER puredns
 WORKDIR /work

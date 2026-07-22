@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"discord-bot/internal/database"
-	"discord-bot/internal/modules/ipscan"
-	"discord-bot/internal/recon"
+	"github.com/Unit-8200/recon-bot/internal/database"
+	"github.com/Unit-8200/recon-bot/internal/modules/ipscan"
+	"github.com/Unit-8200/recon-bot/internal/recon"
 )
 
 func TestResultsImportsLegacyRunsIdempotently(t *testing.T) {

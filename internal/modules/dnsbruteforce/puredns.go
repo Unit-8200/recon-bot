@@ -15,18 +15,22 @@ import (
 	"time"
 )
 
-const wildcardBatchSize = 1_000_000
+const (
+	wildcardBatchSize  = 1_000_000
+	containerWordlist  = "/data/n0kovo_subdomains_huge.txt"
+	containerResolvers = "/data/resolvers.txt"
+)
 
 var containerIDPattern = regexp.MustCompile(`^[a-f0-9]{12,64}$`)
 
 // Options configures the Docker-backed PureDNS adapter.
 type Options struct {
 	Image      string
-	Wordlist   string
-	Resolvers  string
 	RateLimit  int
 	Timeout    time.Duration
 	DockerPath string
+	wordlist   string
+	resolvers  string
 }
 
 // PureDNS runs PureDNS and MassDNS in an isolated container.
@@ -56,13 +60,21 @@ func NewPureDNS(options Options) (*PureDNS, error) {
 		return nil, fmt.Errorf("PureDNS timeout must be positive")
 	}
 
-	wordlist, err := requireRegularFile(options.Wordlist, "PureDNS wordlist")
-	if err != nil {
-		return nil, err
+	if (options.wordlist == "") != (options.resolvers == "") {
+		return nil, fmt.Errorf("PureDNS test wordlist and resolvers must be provided together")
 	}
-	resolvers, err := requireRegularFile(options.Resolvers, "PureDNS resolvers")
-	if err != nil {
-		return nil, err
+	wordlist := ""
+	resolvers := ""
+	var err error
+	if options.wordlist != "" {
+		wordlist, err = requireRegularFile(options.wordlist, "PureDNS test wordlist")
+		if err != nil {
+			return nil, err
+		}
+		resolvers, err = requireRegularFile(options.resolvers, "PureDNS test resolvers")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	dockerPath := strings.TrimSpace(options.DockerPath)
@@ -109,15 +121,25 @@ func (p *PureDNS) Bruteforce(ctx context.Context, rootDomain string) ([]string, 
 		"run", "--rm",
 		"--cidfile", cidFile,
 		"--user", strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()),
-		"--mount", bindMount(p.wordlist, "/data/wordlist.txt"),
-		"--mount", bindMount(p.resolvers, "/data/resolvers.txt"),
+	}
+	wordlist := containerWordlist
+	resolvers := containerResolvers
+	if p.wordlist != "" {
+		wordlist = "/tmp/recon-test-wordlist.txt"
+		resolvers = "/tmp/recon-test-resolvers.txt"
+		args = append(args,
+			"--mount", bindMount(p.wordlist, wordlist),
+			"--mount", bindMount(p.resolvers, resolvers),
+		)
+	}
+	args = append(args,
 		p.image,
-		"bruteforce", "/data/wordlist.txt", rootDomain,
-		"--resolvers", "/data/resolvers.txt",
+		"bruteforce", wordlist, rootDomain,
+		"--resolvers", resolvers,
 		"--wildcard-batch", strconv.Itoa(wildcardBatchSize),
 		"--rate-limit", strconv.Itoa(p.rateLimit),
 		"--quiet",
-	}
+	)
 	output, err := p.run(runCtx, p.dockerPath, args...)
 	if err != nil {
 		if runCtx.Err() != nil {

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"discord-bot/internal/modules/httpprobe"
-	"discord-bot/internal/recon"
+	"github.com/Unit-8200/recon-bot/internal/modules/httpprobe"
+	"github.com/Unit-8200/recon-bot/internal/recon"
 
 	"github.com/xuri/excelize/v2"
 )

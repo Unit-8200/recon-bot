@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"discord-bot/internal/database"
-	"discord-bot/internal/modules/httpprobe"
-	"discord-bot/internal/modules/subdomains"
+	"github.com/Unit-8200/recon-bot/internal/database"
+	"github.com/Unit-8200/recon-bot/internal/modules/httpprobe"
+	"github.com/Unit-8200/recon-bot/internal/modules/subdomains"
 )
 
 const (

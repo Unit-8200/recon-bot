@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"discord-bot/internal/database"
+	"github.com/Unit-8200/recon-bot/internal/database"
 )
 
 const (

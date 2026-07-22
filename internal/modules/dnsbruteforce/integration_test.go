@@ -17,10 +17,10 @@ func TestPureDNSDockerIntegration(t *testing.T) {
 	resolvers := writeFixture(t, directory, "resolvers.txt", "8.8.8.8\n1.1.1.1\n")
 	adapter, err := NewPureDNS(Options{
 		Image:     "discord-puredns:2.1.1",
-		Wordlist:  wordlist,
-		Resolvers: resolvers,
 		RateLimit: 50,
 		Timeout:   time.Minute,
+		wordlist:  wordlist,
+		resolvers: resolvers,
 	})
 	if err != nil {
 		t.Fatalf("NewPureDNS(): %v", err)

@@ -1,0 +1,29 @@
+# Copy this file to ~/.config/recon-bot/config.yaml, set the token and paths,
+# then protect it with: chmod 600 ~/.config/recon-bot/config.yaml
+
+discord:
+  token: your_bot_token_here
+  # Optional but recommended while developing so command updates appear quickly.
+  # Example: guild_id: "1279969723483947008"
+  guild_id:
+
+database:
+  # Leave empty to use ~/.config/recon-bot/recon.db.
+  # Relative paths are resolved from this YAML file's directory.
+  path:
+
+subfinder:
+  # Optional YAML containing Subfinder, GitHub, and Shodan provider keys.
+  # Example: provider_config: /root/recon-bot/secrets/provider-config.yaml
+  provider_config:
+
+puredns:
+  enabled: false
+  image: discord-puredns:2.1.1
+  passive_threshold: 1000
+  rate_limit: 5000
+  timeout: 2h
+
+caduceus:
+  image: discord-puredns:2.1.1
+  timeout: 4h
