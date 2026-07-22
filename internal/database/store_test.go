@@ -77,3 +77,48 @@ func TestStorePersistsAndImportsRunsIdempotently(t *testing.T) {
 		t.Fatalf("IPTargets() = %#v, %v", targets, err)
 	}
 }
+
+func TestDeleteRunCascadesRelatedScanData(t *testing.T) {
+	t.Parallel()
+
+	store, err := Open(filepath.Join(t.TempDir(), "recon.db"))
+	if err != nil {
+		t.Fatalf("Open(): %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	runID, err := store.CreateRun(ctx, RunKindSubs, "example.com", time.Now())
+	if err != nil {
+		t.Fatalf("CreateRun(): %v", err)
+	}
+	if err := store.PutSubdomains(ctx, runID, []string{"www.example.com"}, SubdomainStageResolved); err != nil {
+		t.Fatalf("PutSubdomains(): %v", err)
+	}
+	if err := store.PutHTTPProbes(ctx, runID, []HTTPProbe{{URL: "https://www.example.com"}}); err != nil {
+		t.Fatalf("PutHTTPProbes(): %v", err)
+	}
+	if err := store.PutIPTargets(ctx, runID, []string{"192.0.2.1"}); err != nil {
+		t.Fatalf("PutIPTargets(): %v", err)
+	}
+	if err := store.PutIPDomains(ctx, runID, []string{"certificate.example.com"}); err != nil {
+		t.Fatalf("PutIPDomains(): %v", err)
+	}
+
+	if err := store.DeleteRun(ctx, runID); err != nil {
+		t.Fatalf("DeleteRun(): %v", err)
+	}
+	if err := store.DeleteRun(ctx, runID); err != ErrNotFound {
+		t.Fatalf("second DeleteRun() = %v, want ErrNotFound", err)
+	}
+	for _, table := range []string{"runs", "subdomains", "http_probes", "ip_targets", "ip_domains"} {
+		var count int
+		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE `+map[string]string{
+			"runs": "id", "subdomains": "run_id", "http_probes": "run_id", "ip_targets": "run_id", "ip_domains": "run_id",
+		}[table]+` = ?`, runID).Scan(&count); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("%s retained %d rows after DeleteRun()", table, count)
+		}
+	}
+}

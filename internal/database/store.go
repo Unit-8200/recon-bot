@@ -236,6 +236,22 @@ func (s *Store) FinishRun(ctx context.Context, runID int64, status string, runEr
 	return nil
 }
 
+// DeleteRun removes a scan and all related rows through foreign-key cascades.
+func (s *Store) DeleteRun(ctx context.Context, runID int64) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM runs WHERE id = ?`, runID)
+	if err != nil {
+		return fmt.Errorf("delete database run: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check deleted database run: %w", err)
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // PutSubdomains upserts hostnames and marks their participation in one stage.
 func (s *Store) PutSubdomains(ctx context.Context, runID int64, values []string, stage string) error {
 	column := ""

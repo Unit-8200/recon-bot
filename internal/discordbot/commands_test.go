@@ -10,8 +10,8 @@ func TestCommandDefinitions(t *testing.T) {
 	t.Parallel()
 
 	commands := commandDefinitions()
-	if len(commands) != 4 {
-		t.Fatalf("got %d commands, want 4", len(commands))
+	if len(commands) != 5 {
+		t.Fatalf("got %d commands, want 5", len(commands))
 	}
 	scan := commands[1]
 	if scan.Name != "scan" || len(scan.Options) != 2 {
@@ -58,11 +58,37 @@ func TestCommandDefinitions(t *testing.T) {
 		t.Fatal("/get storage must have an optional descriptions Boolean")
 	}
 	scans := commands[3].Options[1]
-	if len(scans.Options) != 2 || scans.Options[0].Name != "domain" || !scans.Options[0].Required {
-		t.Fatal("/get scans must require domain and support urls")
+	if len(scans.Options) != 3 || scans.Options[0].Name != "domain" || !scans.Options[0].Required {
+		t.Fatal("/get scans must require domain and support content and format")
 	}
-	if scans.Options[1].Name != "urls" || scans.Options[1].Type != discordgo.ApplicationCommandOptionBoolean || scans.Options[1].Required {
-		t.Fatal("/get scans urls must be an optional Boolean")
+	content := scans.Options[1]
+	if content.Name != "content" || content.Type != discordgo.ApplicationCommandOptionString || content.Required || len(content.Choices) != 2 {
+		t.Fatal("/get scans content must be an optional full/urls choice")
+	}
+	if content.Choices[0].Value != "full" || content.Choices[1].Value != "urls" {
+		t.Fatal("/get scans content choices must be full and urls")
+	}
+	format := scans.Options[2]
+	if format.Name != "format" || format.Type != discordgo.ApplicationCommandOptionString || format.Required || len(format.Choices) != 2 {
+		t.Fatal("/get scans format must be an optional txt/xlsx choice")
+	}
+	if format.Choices[0].Value != "txt" || format.Choices[1].Value != "xlsx" {
+		t.Fatal("/get scans format choices must be txt and xlsx")
+	}
+	queue := commands[4]
+	if queue.Name != "queue" || len(queue.Options) != 2 {
+		t.Fatal("fifth command must be /queue with list and delete subcommands")
+	}
+	if queue.Options[0].Name != "list" || queue.Options[0].Type != discordgo.ApplicationCommandOptionSubCommand {
+		t.Fatal("/queue list must be a subcommand")
+	}
+	deleteCommand := queue.Options[1]
+	if deleteCommand.Name != "delete" || deleteCommand.Type != discordgo.ApplicationCommandOptionSubCommand || len(deleteCommand.Options) != 1 {
+		t.Fatal("/queue delete must be a subcommand with one option")
+	}
+	id := deleteCommand.Options[0]
+	if id.Name != "id" || id.Type != discordgo.ApplicationCommandOptionInteger || !id.Required || id.MinValue == nil || *id.MinValue != 1 {
+		t.Fatal("/queue delete must require a positive integer ID")
 	}
 	for _, command := range commands[1:] {
 		if command.DefaultMemberPermissions == nil || *command.DefaultMemberPermissions != discordgo.PermissionAdministrator {

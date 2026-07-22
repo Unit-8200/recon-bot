@@ -1,6 +1,6 @@
 # Discord bot in Go
 
-A Discord bot built with [DiscordGo](https://github.com/bwmarrin/discordgo), Subfinder, HTTPX, and Caduceus. It provides `/ping` plus administrator-only `/scan`, `/add`, and `/get` commands.
+A Discord bot built with [DiscordGo](https://github.com/bwmarrin/discordgo), Subfinder, HTTPX, and Caduceus. It provides `/ping` plus administrator-only `/scan`, `/queue`, `/add`, and `/get` commands.
 
 ## 1. Create the Discord application
 
@@ -71,11 +71,13 @@ go mod tidy
 go run .
 ```
 
-In your Discord test server, enter `/ping`, `/scan subs domain:example.com`, `/get scans domain:example.com`, or `/get roots`. Use `/get scans domain:example.com urls:true` to receive a `urls.txt` attachment containing only sorted, unique HTTP(S) URLs from the latest saved scan. `/get scans domain:*` combines every completed scan, while a wildcard such as `/get scans domain:*example.com` combines every completed scan whose root domain matches; either form can also use `urls:true`. `/get roots` publishes a unique, sorted list of all root domains represented in the saved scan history. Successful `/get` responses are visible to everyone in the channel. Only server administrators can use the data and discovery commands, and you should only scan domains and address ranges you own or are authorized to assess. Stop the bot with `Ctrl+C`.
+In your Discord test server, enter `/ping`, `/scan subs domain:example.com`, `/get scans domain:example.com`, or `/get roots`. `/get scans` defaults to `content:full format:txt`; use `/get scans domain:example.com format:xlsx` for a filterable spreadsheet containing normalized HTTP probe columns. Select `content:urls` with either format for only sorted, unique HTTP(S) URLs—for example, `/get scans domain:example.com content:urls format:xlsx` produces `urls.xlsx`. `/get scans domain:*` combines every completed scan, while a wildcard such as `/get scans domain:*example.com` combines every completed scan whose root domain matches; all of these forms support both content and attachment choices. `/get roots` publishes a unique, sorted list of all root domains represented in the saved scan history. Successful `/get` responses are visible to everyone in the channel. Only server administrators can use the data and discovery commands, and you should only scan domains and address ranges you own or are authorized to assess. Stop the bot with `Ctrl+C`.
+
+Every accepted scan receives a process-local queue ID in its acknowledgement. `/queue list` publicly shows all currently queued and running subdomain and IP scans. `/queue delete id:<id>` cancels that scan; a waiting scan never starts, while a running scan is stopped and its `runs` row plus related `subdomains`, `http_probes`, `ip_targets`, and `ip_domains` rows are deleted. Completed scans no longer appear in the queue and are not deleted by this command. Queue IDs reset when the bot restarts.
 
 Use `/add data:<value>` to place a single-line value in the bot's standalone shared storage. The optional `description` field adds context, and adding the same value again updates its description without creating a duplicate. `/get storage` publishes every manually stored value in `data.txt` without descriptions. Use `/get storage descriptions:true` to append descriptions as `value — description`. This storage is intentionally isolated from `/scan subs`, `/scan ips`, `/get scans`, and `/get roots`.
 
-`/scan subs` acknowledges immediately, runs in the background without an interaction timeout, and sends `httpx_results.txt` to the channel or your DMs when finished. Up to two scans run concurrently. Each scan performs consolidated passive discovery, optionally adds PureDNS brute-force results when enabled and below the passive threshold, validates the merged names through DNSX with 50 workers, and sends only names with an A or AAAA record to HTTPX. HTTPX probes ports `80`, `443`, `8443`, `8444`, `8080`, `3000`, and `5000` with 20 workers and normal HTTP/HTTPS fallback behavior. When both ports 80 and 443 respond for the same hostname, only the port 443 result is retained; results from the other configured ports remain untouched. Each run also creates:
+`/scan subs` acknowledges immediately with its queue ID, runs in the background without an interaction timeout, and sends `httpx_results.txt` to the channel or your DMs when finished. Up to two scans run concurrently. Each scan performs consolidated passive discovery, optionally adds PureDNS brute-force results when enabled and below the passive threshold, validates the merged names through DNSX with 50 workers, and sends only names with an A or AAAA record to HTTPX. HTTPX probes ports `80`, `443`, `8443`, `8444`, `8080`, `3000`, and `5000` with 20 workers and normal HTTP/HTTPS fallback behavior. When both ports 80 and 443 respond for the same hostname, only the port 443 result is retained; results from the other configured ports remain untouched. Each run also creates:
 
 ```text
 passive_subdomains.txt
@@ -124,6 +126,7 @@ The importer recognizes both `timestamp_domain/` and `timestamp_ips/` directorie
 - `internal/modules/ipscan` runs Docker-backed Caduceus scans for IPv4 addresses and CIDRs.
 - `internal/migration` imports legacy timestamped result directories.
 - `internal/recon` orchestrates discovery, probing, and per-run artifact storage.
+- `internal/scanqueue` coordinates current jobs and scan cancellation.
 - `.env.example` documents the required configuration.
 - `.gitignore` prevents your real token from being committed.
 

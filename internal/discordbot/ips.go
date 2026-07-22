@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"discord-bot/internal/modules/ipscan"
+	"discord-bot/internal/scanqueue"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -32,7 +33,7 @@ func (b *Bot) handleIPs(session *discordgo.Session, event *discordgo.Interaction
 
 	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{Flags: discordgo.MessageFlagsEphemeral},
+		Data: &discordgo.InteractionResponseData{},
 	}); err != nil {
 		log.Printf("defer /scan ips response: %v", err)
 		return
@@ -57,24 +58,22 @@ func (b *Bot) handleIPs(session *discordgo.Session, event *discordgo.Interaction
 		return
 	}
 
-	acknowledgement := fmt.Sprintf("IP scan started with %d target entries.", len(targets))
+	queueID := b.scanQueue.Submit(b.context(), scanqueue.KindIPs, fmt.Sprintf("%d target entries", len(targets)), func(ctx context.Context) int64 {
+		return b.runIPs(ctx, session, event.ChannelID, event.Member.User.ID, targets, ports)
+	})
+	acknowledgement := fmt.Sprintf("IP scan `#%d` queued with %d target entries.", queueID, len(targets))
 	if _, err := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &acknowledgement}); err != nil {
 		log.Printf("acknowledge /scan ips: %v", err)
+		b.scanQueue.Delete(queueID)
 		return
 	}
-
-	parent := b.runContext
-	if parent == nil {
-		parent = context.Background()
-	}
-	go b.runIPs(parent, session, event.ChannelID, event.Member.User.ID, targets, ports)
 }
 
-func (b *Bot) runIPs(ctx context.Context, session *discordgo.Session, channelID, userID string, targets []string, ports string) {
+func (b *Bot) runIPs(ctx context.Context, session *discordgo.Session, channelID, userID string, targets []string, ports string) int64 {
 	result, err := b.ipScanner.Scan(ctx, targets, ports)
 	if ctx.Err() != nil {
-		log.Printf("IP scan stopped during bot shutdown: %v", ctx.Err())
-		return
+		log.Printf("IP scan cancelled: %v", ctx.Err())
+		return result.RunID
 	}
 	if err != nil {
 		log.Printf("run /scan ips: %v", err)
@@ -85,7 +84,7 @@ func (b *Bot) runIPs(ctx context.Context, session *discordgo.Session, channelID,
 		if _, sendErr := session.ChannelMessageSend(channelID, content); sendErr != nil {
 			log.Printf("report /scan ips failure: %v", sendErr)
 		}
-		return
+		return result.RunID
 	}
 
 	if _, err := session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
@@ -96,6 +95,7 @@ func (b *Bot) runIPs(ctx context.Context, session *discordgo.Session, channelID,
 	}); err != nil {
 		log.Printf("publish /scan ips results: %v", err)
 	}
+	return result.RunID
 }
 
 func attachmentOption(data discordgo.ApplicationCommandInteractionData, name string) (*discordgo.MessageAttachment, bool) {

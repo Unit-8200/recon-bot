@@ -9,6 +9,7 @@ import (
 	"discord-bot/internal/database"
 	"discord-bot/internal/modules/ipscan"
 	"discord-bot/internal/recon"
+	"discord-bot/internal/scanqueue"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -38,11 +39,12 @@ type Bot struct {
 	recon      ReconRunner
 	ipScanner  IPScanner
 	dataStore  DataStore
+	scanQueue  *scanqueue.Manager
 	runContext context.Context
 }
 
 // New constructs a Discord bot without opening its network connection.
-func New(token, guildID string, reconRunner ReconRunner, ipScanner IPScanner, dataStore DataStore) (*Bot, error) {
+func New(token, guildID string, reconRunner ReconRunner, ipScanner IPScanner, dataStore DataStore, queue *scanqueue.Manager) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("Discord token is required")
 	}
@@ -55,6 +57,9 @@ func New(token, guildID string, reconRunner ReconRunner, ipScanner IPScanner, da
 	if dataStore == nil {
 		return nil, fmt.Errorf("data store is required")
 	}
+	if queue == nil {
+		return nil, fmt.Errorf("scan queue is required")
+	}
 
 	session, err := discordgo.New("Bot " + token)
 	if err != nil {
@@ -62,7 +67,10 @@ func New(token, guildID string, reconRunner ReconRunner, ipScanner IPScanner, da
 	}
 	session.Identify.Intents = discordgo.IntentsGuilds
 
-	bot := &Bot{session: session, guildID: guildID, recon: reconRunner, ipScanner: ipScanner, dataStore: dataStore}
+	bot := &Bot{
+		session: session, guildID: guildID, recon: reconRunner, ipScanner: ipScanner,
+		dataStore: dataStore, scanQueue: queue,
+	}
 	session.AddHandler(bot.readyHandler)
 	session.AddHandler(bot.interactionHandler)
 
@@ -114,5 +122,7 @@ func (b *Bot) interactionHandler(session *discordgo.Session, event *discordgo.In
 		b.handleAdd(session, event)
 	case "get":
 		b.handleGet(session, event)
+	case "queue":
+		b.handleQueue(session, event)
 	}
 }

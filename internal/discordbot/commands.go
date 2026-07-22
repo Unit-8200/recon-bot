@@ -1,6 +1,7 @@
 package discordbot
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"discord-bot/internal/recon"
+	"discord-bot/internal/scanqueue"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -17,6 +19,7 @@ const privateDeliveryCode int64 = 999
 func commandDefinitions() []*discordgo.ApplicationCommand {
 	adminPermissions := int64(discordgo.PermissionAdministrator)
 	guildContexts := []discordgo.InteractionContextType{discordgo.InteractionContextGuild}
+	minimumQueueID := float64(1)
 
 	return []*discordgo.ApplicationCommand{
 		{
@@ -128,10 +131,24 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 							Required:    true,
 						},
 						{
-							Type:        discordgo.ApplicationCommandOptionBoolean,
-							Name:        "urls",
-							Description: "Return only unique HTTP and HTTPS URLs",
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "content",
+							Description: "Result content; defaults to full",
 							Required:    false,
+							Choices: []*discordgo.ApplicationCommandOptionChoice{
+								{Name: "full", Value: "full"},
+								{Name: "urls", Value: "urls"},
+							},
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "format",
+							Description: "Attachment format; defaults to txt",
+							Required:    false,
+							Choices: []*discordgo.ApplicationCommandOptionChoice{
+								{Name: "txt", Value: "txt"},
+								{Name: "xlsx", Value: "xlsx"},
+							},
 						},
 					},
 				},
@@ -139,6 +156,33 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "roots",
 					Description: "List root domains from /scan subs history",
+				},
+			},
+		},
+		{
+			Name:                     "queue",
+			Description:              "List or cancel current scans",
+			DefaultMemberPermissions: &adminPermissions,
+			Contexts:                 &guildContexts,
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "list",
+					Description: "List queued and running scans",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "delete",
+					Description: "Cancel a scan and delete its related data",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionInteger,
+							Name:        "id",
+							Description: "Queue ID shown by /queue list",
+							Required:    true,
+							MinValue:    &minimumQueueID,
+						},
+					},
 				},
 			},
 		},
@@ -188,26 +232,24 @@ func (b *Bot) handleSubs(session *discordgo.Session, event *discordgo.Interactio
 	}
 	private := integerOption(options, "code") == privateDeliveryCode
 
+	parent := b.context()
+	queueID := b.scanQueue.Submit(parent, scanqueue.KindSubs, domain, func(ctx context.Context) int64 {
+		return b.runSubs(ctx, session, event.ChannelID, event.Member.User.ID, domain, private)
+	})
+
 	destination := "this channel"
 	if private {
 		destination = "your DMs"
 	}
-	acknowledgement := fmt.Sprintf("Scan started for `%s`. The HTTPX results will be sent to %s when it finishes.", domain, destination)
+	acknowledgement := fmt.Sprintf("Scan `#%d` queued for `%s`. The HTTPX results will be sent to %s when it finishes.", queueID, domain, destination)
 	if err := respond(session, event, acknowledgement, private); err != nil {
 		log.Printf("acknowledge /scan subs: %v", err)
+		b.scanQueue.Delete(queueID)
 		return
 	}
-
-	parent := b.runContext
-	if parent == nil {
-		parent = context.Background()
-	}
-	channelID := event.ChannelID
-	userID := event.Member.User.ID
-	go b.runSubs(parent, session, channelID, userID, domain, private)
 }
 
-func (b *Bot) runSubs(ctx context.Context, session *discordgo.Session, channelID, userID, domain string, private bool) {
+func (b *Bot) runSubs(ctx context.Context, session *discordgo.Session, channelID, userID, domain string, private bool) int64 {
 	deliveryChannelID := channelID
 	if private {
 		directMessage, dmErr := session.UserChannelCreate(userID)
@@ -217,15 +259,15 @@ func (b *Bot) runSubs(ctx context.Context, session *discordgo.Session, channelID
 			if _, sendErr := session.ChannelMessageSend(channelID, failure); sendErr != nil {
 				log.Printf("report private /scan subs delivery failure: %v", sendErr)
 			}
-			return
+			return 0
 		}
 		deliveryChannelID = directMessage.ID
 	}
 
 	result, err := b.recon.Run(ctx, domain)
 	if ctx.Err() != nil {
-		log.Printf("scan for %q stopped during bot shutdown: %v", domain, ctx.Err())
-		return
+		log.Printf("scan for %q cancelled: %v", domain, ctx.Err())
+		return result.RunID
 	}
 	if err != nil {
 		log.Printf("run scan for %q: %v", domain, err)
@@ -242,7 +284,7 @@ func (b *Bot) runSubs(ctx context.Context, session *discordgo.Session, channelID
 		if _, sendErr := session.ChannelMessageSend(deliveryChannelID, content); sendErr != nil {
 			log.Printf("report /scan subs failure: %v", sendErr)
 		}
-		return
+		return result.RunID
 	}
 
 	content := fmt.Sprintf("<@%s> scan complete for `%s`.", userID, result.Domain)
@@ -262,6 +304,7 @@ func (b *Bot) runSubs(ctx context.Context, session *discordgo.Session, channelID
 			log.Printf("report /scan subs publish failure: %v", sendErr)
 		}
 	}
+	return result.RunID
 }
 
 func (b *Bot) handleGetScans(session *discordgo.Session, event *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
@@ -272,7 +315,27 @@ func (b *Bot) handleGetScans(session *discordgo.Session, event *discordgo.Intera
 		}
 		return
 	}
-	urlsOnly := booleanOption(options, "urls")
+	contentType, hasContentType := stringOption(options, "content")
+	if !hasContentType {
+		contentType = "full"
+	}
+	if contentType != "full" && contentType != "urls" {
+		if err := respond(session, event, "The `content` option must be `full` or `urls`.", true); err != nil {
+			log.Printf("validate /get scans content: %v", err)
+		}
+		return
+	}
+	urlsOnly := contentType == "urls"
+	format, hasFormat := stringOption(options, "format")
+	if !hasFormat {
+		format = "txt"
+	}
+	if format != "txt" && format != "xlsx" {
+		if err := respond(session, event, "The `format` option must be `txt` or `xlsx`.", true); err != nil {
+			log.Printf("validate /get scans format: %v", err)
+		}
+		return
+	}
 
 	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
@@ -303,6 +366,30 @@ func (b *Bot) handleGetScans(session *discordgo.Session, event *discordgo.Intera
 	content := fmt.Sprintf("Latest scan results for `%s`.", results[0].Domain)
 	if len(results) > 1 || strings.Contains(domain, "*") {
 		content = fmt.Sprintf("Scan results matching `%s`.", domain)
+	}
+	if format == "xlsx" {
+		workbook, workbookErr := scanWorkbook(results, urlsOnly)
+		if workbookErr != nil {
+			log.Printf("build /get scans spreadsheet for %q: %v", domain, workbookErr)
+			failure := "Could not create the XLSX scan results. Review the bot logs."
+			if _, editErr := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &failure}); editErr != nil {
+				log.Printf("report /get scans spreadsheet failure: %v", editErr)
+			}
+			return
+		}
+		filename := httpxSpreadsheetFilename
+		if urlsOnly {
+			filename = urlsSpreadsheetFilename
+		}
+		if _, editErr := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{
+			Content: &content,
+			Files: []*discordgo.File{
+				{Name: filename, ContentType: xlsxContentType, Reader: bytes.NewReader(workbook)},
+			},
+		}); editErr != nil {
+			log.Printf("send XLSX /get scans for %q: %v", domain, editErr)
+		}
+		return
 	}
 
 	if urlsOnly {

@@ -267,10 +267,11 @@ func (s *Service) Results(query string) ([]Result, error) {
 			return nil, fmt.Errorf("read HTTP probes for run %d: %w", run.ID, probeErr)
 		}
 		results = append(results, Result{
-			RunID:       run.ID,
-			Domain:      run.Domain,
-			StartedAt:   run.StartedAt,
-			HTTPXOutput: databaseHTTPXLines(probes),
+			RunID:        run.ID,
+			Domain:       run.Domain,
+			StartedAt:    run.StartedAt,
+			HTTPXResults: httpxResultsFromDatabase(probes),
+			HTTPXOutput:  databaseHTTPXLines(probes),
 		})
 		if !wildcard {
 			break
@@ -388,4 +389,34 @@ func databaseHTTPXLines(probes []database.HTTPProbe) string {
 		}
 	}
 	return lines(values)
+}
+
+func httpxResultsFromDatabase(probes []database.HTTPProbe) []httpprobe.Result {
+	results := make([]httpprobe.Result, 0, len(probes))
+	for _, probe := range probes {
+		results = append(results, httpprobe.Result{
+			CLIOutput:     probe.Output,
+			Timestamp:     probe.Timestamp,
+			Input:         probe.Input,
+			URL:           probe.URL,
+			FinalURL:      probe.FinalURL,
+			Scheme:        probe.Scheme,
+			Host:          probe.Host,
+			Port:          probe.Port,
+			StatusCode:    probe.StatusCode,
+			Title:         probe.Title,
+			Technologies:  append([]string(nil), probe.Technologies...),
+			WebServer:     probe.WebServer,
+			IPs:           append([]string(nil), probe.IPs...),
+			CDN:           probe.CDN,
+			CDNName:       probe.CDNName,
+			CDNType:       probe.CDNType,
+			ContentLength: probe.ContentLength,
+			ContentType:   probe.ContentType,
+			BodyPreview:   probe.BodyPreview,
+			Location:      probe.Location,
+			Error:         probe.Error,
+		})
+	}
+	return results
 }

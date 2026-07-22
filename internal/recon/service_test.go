@@ -98,6 +98,9 @@ func TestLatestReturnsNewestExactDomainResult(t *testing.T) {
 	if result.HTTPXOutput != "new\n" {
 		t.Fatalf("HTTPX output = %q", result.HTTPXOutput)
 	}
+	if len(result.HTTPXResults) != 1 || result.HTTPXResults[0].CLIOutput != "new" {
+		t.Fatalf("HTTPX results = %#v", result.HTTPXResults)
+	}
 }
 
 func TestLatestReturnsNotFound(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 	"discord-bot/internal/modules/ipscan"
 	"discord-bot/internal/modules/subdomains"
 	"discord-bot/internal/recon"
+	"discord-bot/internal/scanqueue"
 )
 
 // Run builds the application's dependencies and runs until ctx is cancelled.
@@ -72,7 +73,8 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("initialize Caduceus: %w", err)
 	}
 
-	bot, err := discordbot.New(cfg.DiscordToken, cfg.DiscordGuildID, workflow, ipScanner, store)
+	queue := scanqueue.New(store)
+	bot, err := discordbot.New(cfg.DiscordToken, cfg.DiscordGuildID, workflow, ipScanner, store, queue)
 	if err != nil {
 		return err
 	}
