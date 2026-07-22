@@ -74,7 +74,7 @@ func New(deleter RunDeleter) *Manager {
 	}
 }
 
-// Submit adds a scan to the queue and returns its process-local queue ID.
+// Submit adds a scan to the queue and returns its process-local job ID.
 func (m *Manager) Submit(parent context.Context, kind Kind, target string, task Task) int64 {
 	if parent == nil {
 		parent = context.Background()
@@ -101,7 +101,7 @@ func (m *Manager) Submit(parent context.Context, kind Kind, target string, task 
 	return item.job.ID
 }
 
-// List returns current queued and running scans ordered by queue ID.
+// List returns current queued and running scans ordered by job ID.
 func (m *Manager) List() []Job {
 	m.mu.Lock()
 	jobs := make([]Job, 0, len(m.jobs))

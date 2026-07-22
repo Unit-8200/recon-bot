@@ -13,27 +13,46 @@ import (
 
 const storedDataFilename = "data.txt"
 
-func (b *Bot) handleAdd(session *discordgo.Session, event *discordgo.InteractionCreate) {
+func (b *Bot) handleStorage(session *discordgo.Session, event *discordgo.InteractionCreate) {
 	if !isAdministrator(event) {
-		if err := respond(session, event, "Only server administrators can use `/add`.", true); err != nil {
-			log.Printf("reject /add: %v", err)
+		if err := respond(session, event, "Only server administrators can use `/storage`.", true); err != nil {
+			log.Printf("reject /storage: %v", err)
 		}
 		return
 	}
+	options := event.ApplicationCommandData().Options
+	if len(options) != 1 || options[0].Type != discordgo.ApplicationCommandOptionSubCommand {
+		if err := respond(session, event, "Choose either `/storage add` or `/storage list`.", true); err != nil {
+			log.Printf("validate /storage subcommand: %v", err)
+		}
+		return
+	}
+	switch options[0].Name {
+	case "add":
+		b.handleStorageAdd(session, event, options[0].Options)
+	case "list":
+		b.handleStorageList(session, event, options[0].Options)
+	default:
+		if err := respond(session, event, "Unknown `/storage` subcommand.", true); err != nil {
+			log.Printf("reject unknown /storage subcommand: %v", err)
+		}
+	}
+}
 
-	data, ok := stringOption(event.ApplicationCommandData().Options, "data")
+func (b *Bot) handleStorageAdd(session *discordgo.Session, event *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
+	data, ok := stringOption(options, "data")
 	if !ok {
 		if err := respond(session, event, "The `data` option is required.", true); err != nil {
-			log.Printf("validate /add: %v", err)
+			log.Printf("validate /storage add: %v", err)
 		}
 		return
 	}
-	description, _ := stringOption(event.ApplicationCommandData().Options, "description")
+	description, _ := stringOption(options, "description")
 	created, err := b.dataStore.AddStoredItem(b.context(), data, description)
 	if err != nil {
-		log.Printf("store /add data: %v", err)
+		log.Printf("store /storage add data: %v", err)
 		if respondErr := respond(session, event, fmt.Sprintf("Could not store the data: %v", err), true); respondErr != nil {
-			log.Printf("report /add failure: %v", respondErr)
+			log.Printf("report /storage add failure: %v", respondErr)
 		}
 		return
 	}
@@ -42,51 +61,22 @@ func (b *Bot) handleAdd(session *discordgo.Session, event *discordgo.Interaction
 		message = "That data was already stored."
 	}
 	if err := respond(session, event, message, false); err != nil {
-		log.Printf("respond to /add: %v", err)
+		log.Printf("respond to /storage add: %v", err)
 	}
 }
 
-func (b *Bot) handleGet(session *discordgo.Session, event *discordgo.InteractionCreate) {
-	if !isAdministrator(event) {
-		if err := respond(session, event, "Only server administrators can use `/get`.", true); err != nil {
-			log.Printf("reject /get: %v", err)
-		}
-		return
-	}
-	options := event.ApplicationCommandData().Options
-	if len(options) != 1 || options[0].Type != discordgo.ApplicationCommandOptionSubCommand {
-		if err := respond(session, event, "Choose one of `/get storage`, `/get scans`, or `/get roots`.", true); err != nil {
-			log.Printf("validate /get subcommand: %v", err)
-		}
-		return
-	}
-	subcommand := options[0]
-	switch subcommand.Name {
-	case "storage":
-		b.handleStorageGet(session, event, subcommand.Options)
-	case "scans":
-		b.handleGetScans(session, event, subcommand.Options)
-	case "roots":
-		b.handleGetRoots(session, event)
-	default:
-		if err := respond(session, event, "Unknown `/get` subcommand.", true); err != nil {
-			log.Printf("reject unknown /get subcommand: %v", err)
-		}
-	}
-}
-
-func (b *Bot) handleStorageGet(session *discordgo.Session, event *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
+func (b *Bot) handleStorageList(session *discordgo.Session, event *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
 	items, err := b.dataStore.StoredItems(b.context())
 	if err != nil {
-		log.Printf("read /get data: %v", err)
+		log.Printf("read /storage list data: %v", err)
 		if respondErr := respond(session, event, "Could not read the stored data. Review the bot logs.", true); respondErr != nil {
-			log.Printf("report /get failure: %v", respondErr)
+			log.Printf("report /storage list failure: %v", respondErr)
 		}
 		return
 	}
 	if len(items) == 0 {
 		if err := respond(session, event, "No data has been stored yet.", false); err != nil {
-			log.Printf("respond to empty /get: %v", err)
+			log.Printf("respond to empty /storage list: %v", err)
 		}
 		return
 	}
@@ -102,7 +92,7 @@ func (b *Bot) handleStorageGet(session *discordgo.Session, event *discordgo.Inte
 			}},
 		},
 	}); err != nil {
-		log.Printf("respond to /get: %v", err)
+		log.Printf("respond to /storage list: %v", err)
 	}
 }
 

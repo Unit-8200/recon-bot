@@ -133,7 +133,7 @@ func TestResultsSupportsAllAndWildcardQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Results(*): %v", err)
 	}
-	if len(all) != 4 || all[0].Domain != "other.net" || all[3].Domain != "example.com" {
+	if len(all) != 3 || all[0].Domain != "other.net" || all[1].Domain != "example.com" || all[2].Domain != "notexample.com" {
 		t.Fatalf("Results(*) = %#v", all)
 	}
 
@@ -141,11 +141,11 @@ func TestResultsSupportsAllAndWildcardQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Results(wildcard): %v", err)
 	}
-	if len(wildcard) != 3 {
-		t.Fatalf("Results(wildcard) returned %d results, want 3", len(wildcard))
+	if len(wildcard) != 2 {
+		t.Fatalf("Results(wildcard) returned %d results, want 2", len(wildcard))
 	}
-	if wildcard[0].Domain != "example.com" || wildcard[1].Domain != "notexample.com" || wildcard[2].Domain != "example.com" {
-		t.Fatalf("Results(wildcard) domains = %q, %q, %q", wildcard[0].Domain, wildcard[1].Domain, wildcard[2].Domain)
+	if wildcard[0].Domain != "example.com" || wildcard[1].Domain != "notexample.com" {
+		t.Fatalf("Results(wildcard) domains = %q, %q", wildcard[0].Domain, wildcard[1].Domain)
 	}
 
 	exact, err := service.Results("example.com")
@@ -154,6 +154,48 @@ func TestResultsSupportsAllAndWildcardQueries(t *testing.T) {
 	}
 	if len(exact) != 1 || exact[0].HTTPXOutput != "three\n" {
 		t.Fatalf("Results(exact) = %#v", exact)
+	}
+}
+
+func TestWildcardResultsKeepNewestRunPerRootAndNewestEndpoint(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	service, err := New(store, fakeEnumerator{}, fakeValidator{}, fakeProber{})
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+
+	seedSubRun(t, store, "example.com", time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
+		"https://shared.example [200] [old example result]\nhttps://old-only.example [200]\n")
+	seedSubRun(t, store, "other.net", time.Date(2026, 7, 17, 13, 0, 0, 0, time.UTC),
+		"https://shared.example [301] [older shared result]\nhttps://other.example [200]\n")
+	seedSubRun(t, store, "example.com", time.Date(2026, 7, 17, 14, 0, 0, 0, time.UTC),
+		"https://shared.example [201] [newest shared result]\nhttps://new.example [200]\n")
+
+	results, err := service.Results("*")
+	if err != nil {
+		t.Fatalf("Results(*): %v", err)
+	}
+	if len(results) != 2 || results[0].Domain != "example.com" || results[1].Domain != "other.net" {
+		t.Fatalf("wildcard results = %#v", results)
+	}
+	combined := CombineHTTPX(results[0].HTTPXOutput, results[1].HTTPXOutput)
+	if strings.Count(combined, "https://shared.example") != 1 {
+		t.Fatalf("shared endpoint was not deduplicated: %q", combined)
+	}
+	for _, unwanted := range []string{"old example result", "older shared result", "old-only.example"} {
+		if strings.Contains(combined, unwanted) {
+			t.Fatalf("combined output contains stale value %q: %q", unwanted, combined)
+		}
+	}
+	for _, expected := range []string{"newest shared result", "https://new.example", "https://other.example"} {
+		if !strings.Contains(combined, expected) {
+			t.Fatalf("combined output is missing %q: %q", expected, combined)
+		}
+	}
+	if len(results[0].HTTPXResults) != 2 || len(results[1].HTTPXResults) != 1 {
+		t.Fatalf("deduplicated structured probes = %d, %d", len(results[0].HTTPXResults), len(results[1].HTTPXResults))
 	}
 }
 

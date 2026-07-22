@@ -1,6 +1,6 @@
 # Discord bot in Go
 
-A Discord bot built with [DiscordGo](https://github.com/bwmarrin/discordgo), Subfinder, HTTPX, and Caduceus. It provides `/ping` plus administrator-only `/scan`, `/queue`, `/add`, and `/get` commands.
+A Discord bot built with [DiscordGo](https://github.com/bwmarrin/discordgo), Subfinder, HTTPX, and Caduceus. It provides `/ping` plus administrator-only `/scan`, `/results`, `/storage`, and `/jobs` commands.
 
 ## 1. Create the Discord application
 
@@ -25,7 +25,7 @@ Edit `discord.token` in that file. `discord.guild_id` is optional, but guild com
 
 The bot consolidates passive results from Subfinder, Shosubgo/Shodan, and GitHub Subdomains. Subfinder always runs with every source (`subfinder -all`). Set `subfinder.provider_config` to your provider key YAML; its `github` and `shodan` entries enable the additional adapters. Without those keys, the corresponding adapters are skipped. Paths beginning with `~` are expanded, and relative paths are resolved from the bot YAML's directory rather than the shell's working directory.
 
-New `/scan subs` and `/scan ips` runs are stored as normalized rows in SQLite. Leave `database.path` empty to use `~/.config/recon-bot/recon.db`, outside the cloned repository and with owner-only permissions. Set an explicit path only when you want another location.
+New `/scan domain` and `/scan network` runs are stored as normalized rows in SQLite. Leave `database.path` empty to use `~/.config/recon-bot/recon.db`, outside the cloned repository and with owner-only permissions. Set an explicit path only when you want another location.
 
 On the first run after upgrading, if the persistent database does not exist but the former repository-local `data/recon.db` does, the bot creates a consistent SQLite copy at the new location and leaves the original untouched. The same relocation check runs before `recon-bot migrate`. Once the startup log confirms the persistent path, back up `~/.config/recon-bot/recon.db` separately from the Git checkout.
 
@@ -54,19 +54,19 @@ docker run --rm --entrypoint caduceus discord-puredns:2.1.1 -h
 docker run --rm --entrypoint caduceus discord-puredns:2.1.1 -i 192.0.2.10 -p 443
 ```
 
-The `/scan ips` command runs Caduceus in the background. For a small input, pass comma- or space-separated IPv4 addresses and CIDRs directly:
+The `/scan network` command runs Caduceus in the background. For a small input, pass comma- or space-separated IPv4 addresses and CIDRs directly:
 
 ```text
-/scan ips targets:192.0.2.10,198.51.100.0/28 ports:443,8443
+/scan network targets:192.0.2.10,198.51.100.0/28
 ```
 
 For large inputs, attach a text file with one IPv4 address or CIDR per line:
 
 ```text
-/scan ips file:targets.txt ports:443,8443
+/scan network file:targets.txt
 ```
 
-Choose exactly one of `targets` and `file`. Attachments are limited to 8 MiB, validated before the job starts, and streamed to the container over stdin. Caduceus currently handles IPv4 targets; IPv6 input is rejected instead of being passed in a format the upstream tool cannot scan correctly. `/scan ips` publishes `caduceus_results.txt` when complete and saves its inputs in `ip_targets` and discoveries in `ip_domains`. Failed runs retain any rows completed before the failure. Only one Caduceus job runs at a time. IP runs remain separate from `/get scans` and `/get roots`.
+Choose exactly one of `targets` and `file`. Attachments are limited to 8 MiB, validated before the job starts, and streamed to the container over stdin. Caduceus checks TLS port 443. It currently handles IPv4 targets; IPv6 input is rejected instead of being passed in a format the upstream tool cannot scan correctly. `/scan network` publishes `caduceus_results.txt` when complete and saves its inputs in `ip_targets` and discoveries in `ip_domains`. Failed runs retain any rows completed before the failure. Only one Caduceus job runs at a time. Network runs remain separate from `/results domain` and `/results roots`.
 
 Use only against domains and address ranges you are authorized to test. Public resolvers change over time; curate your own resolver file when reliability matters and choose a responsible rate limit.
 
@@ -91,13 +91,32 @@ go install github.com/Unit-8200/recon-bot@latest
 
 During local development, use `go run . run --config /path/to/config.yaml`. The Cobra command tree also provides `recon-bot --help`, `recon-bot version`, and shell completion through `recon-bot completion <shell>`.
 
-In your Discord test server, enter `/ping`, `/scan subs domain:example.com`, `/get scans domain:example.com`, or `/get roots`. `/get scans` defaults to `content:full format:txt`; use `/get scans domain:example.com format:xlsx` for a filterable spreadsheet containing normalized HTTP probe columns. Select `content:urls` with either format for only sorted, unique HTTP(S) URLs—for example, `/get scans domain:example.com content:urls format:xlsx` produces `urls.xlsx`. `/get scans domain:*` combines every completed scan, while a wildcard such as `/get scans domain:*example.com` combines every completed scan whose root domain matches; all of these forms support both content and attachment choices. `/get roots` publishes a unique, sorted list of all root domains represented in the saved scan history. Successful `/get` responses are visible to everyone in the channel. Only server administrators can use the data and discovery commands, and you should only scan domains and address ranges you own or are authorized to assess. Stop the bot with `Ctrl+C`.
+### Discord command structure
 
-Every accepted scan receives a process-local queue ID in its acknowledgement. `/queue list` publicly shows all currently queued and running subdomain and IP scans. `/queue delete id:<id>` cancels that scan; a waiting scan never starts, while a running scan is stopped and its `runs` row plus related `subdomains`, `http_probes`, `ip_targets`, and `ip_domains` rows are deleted. Completed scans no longer appear in the queue and are not deleted by this command. Queue IDs reset when the bot restarts.
+```text
+/scan domain domain:<root> code:<optional>
+/scan network targets:<IPs/CIDRs>
+/scan network file:<attachment>
 
-Use `/add data:<value>` to place a single-line value in the bot's standalone shared storage. The optional `description` field adds context, and adding the same value again updates its description without creating a duplicate. `/get storage` publishes every manually stored value in `data.txt` without descriptions. Use `/get storage descriptions:true` to append descriptions as `value — description`. This storage is intentionally isolated from `/scan subs`, `/scan ips`, `/get scans`, and `/get roots`.
+/results domain query:<domain|wildcard> view:<details|urls> format:<txt|xlsx>
+/results roots
 
-`/scan subs` acknowledges immediately with its queue ID, runs in the background without an interaction timeout, and sends `httpx_results.txt` to the channel or your DMs when finished. Up to two scans run concurrently. Each scan performs consolidated passive discovery, optionally adds PureDNS brute-force results when enabled and below the passive threshold, validates the merged names through DNSX with 50 workers, and sends only names with an A or AAAA record to HTTPX. HTTPX probes ports `80`, `443`, `8443`, `8444`, `8080`, `3000`, and `5000` with 20 workers and normal HTTP/HTTPS fallback behavior. When both ports 80 and 443 respond for the same hostname, only the port 443 result is retained; results from the other configured ports remain untouched. Each run also creates:
+/storage add data:<value> description:<optional>
+/storage list descriptions:<true|false>
+
+/jobs list
+/jobs cancel id:<job-id>
+
+/ping
+```
+
+In your Discord test server, enter `/ping`, `/scan domain domain:example.com`, `/results domain query:example.com`, or `/results roots`. `/results domain` defaults to `view:details format:txt`; use `/results domain query:example.com format:xlsx` for a filterable spreadsheet containing normalized HTTP probe columns. Select `view:urls` with either format for only sorted, unique HTTP(S) URLs—for example, `/results domain query:example.com view:urls format:xlsx` produces `urls.xlsx`. `/results domain query:*` combines the newest completed scan for every root domain, while a wildcard such as `/results domain query:*example.com` combines the newest completed scan for each matching root. Repeated URLs are collapsed across the selected scans, with the newest probe retained in both TXT and XLSX output. Older runs remain stored as history. `/results roots` publishes a unique, sorted list of all root domains represented in that history. Successful `/results` responses are visible to everyone in the channel. Only server administrators can use the data and discovery commands, and you should only scan domains and address ranges you own or are authorized to assess. Stop the bot with `Ctrl+C`.
+
+Every accepted scan receives a process-local job ID in its acknowledgement. `/jobs list` publicly shows all currently queued and running domain and network scans. `/jobs cancel id:<id>` cancels that scan; a waiting scan never starts, while a running scan is stopped and its `runs` row plus related `subdomains`, `http_probes`, `ip_targets`, and `ip_domains` rows are deleted. Completed scans no longer appear in the list and are not deleted by this command. Job IDs reset when the bot restarts.
+
+Use `/storage add data:<value>` to place a single-line value in the bot's standalone shared storage. The optional `description` field adds context, and adding the same value again updates its description without creating a duplicate. `/storage list` publishes every manually stored value in `data.txt` without descriptions. Use `/storage list descriptions:true` to append descriptions as `value — description`. This storage is intentionally isolated from scanning and reconnaissance results.
+
+`/scan domain` acknowledges immediately with its job ID, runs in the background without an interaction timeout, and sends `httpx_results.txt` to the channel or your DMs when finished. Up to two scans run concurrently. Each scan performs consolidated passive discovery, optionally adds PureDNS brute-force results when enabled and below the passive threshold, validates the merged names through DNSX with 50 workers, and sends only names with an A or AAAA record to HTTPX. HTTPX probes ports `80`, `443`, `8443`, `8444`, `8080`, `3000`, and `5000` with 20 workers and normal HTTP/HTTPS fallback behavior. When both ports 80 and 443 respond for the same hostname, only the port 443 result is retained; results from the other configured ports remain untouched. Each run also creates:
 
 ```text
 passive_subdomains.txt
@@ -112,11 +131,11 @@ These filenames describe the Discord attachments generated from normalized datab
 ### SQLite tables
 
 - `runs` stores scan type, root domain, timestamp, status, error, and legacy source path.
-- `subdomains` stores one hostname per `/scan subs` run with passive, bruteforced, and resolved flags.
+- `subdomains` stores one hostname per `/scan domain` run with passive, bruteforced, and resolved flags.
 - `http_probes` stores one HTTPX endpoint per row with its URL, status, title, server, IPs, technologies, redirect, content metadata, and display output.
-- `ip_targets` stores each IP address or CIDR passed to `/scan ips`.
-- `ip_domains` stores each unique domain returned by Caduceus for an IP scan.
-- `stored_items` stores values submitted manually through `/add` and is the only table read by `/get storage`.
+- `ip_targets` stores each IP address or CIDR passed to `/scan network`.
+- `ip_domains` stores each unique domain returned by Caduceus for a network scan.
+- `stored_items` stores values submitted manually through `/storage add` and is the only table read by `/storage list`.
 
 ### Merge previous results
 

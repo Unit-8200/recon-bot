@@ -19,7 +19,7 @@ const privateDeliveryCode int64 = 999
 func commandDefinitions() []*discordgo.ApplicationCommand {
 	adminPermissions := int64(discordgo.PermissionAdministrator)
 	guildContexts := []discordgo.InteractionContextType{discordgo.InteractionContextGuild}
-	minimumQueueID := float64(1)
+	minimumJobID := float64(1)
 
 	return []*discordgo.ApplicationCommand{
 		{
@@ -28,14 +28,14 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 		},
 		{
 			Name:                     "scan",
-			Description:              "Run domain or IP reconnaissance",
+			Description:              "Run domain or network reconnaissance",
 			DefaultMemberPermissions: &adminPermissions,
 			Contexts:                 &guildContexts,
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "subs",
-					Description: "Enumerate subdomains and probe web services",
+					Name:        "domain",
+					Description: "Discover subdomains and live web services",
 					Options: []*discordgo.ApplicationCommandOption{
 						{
 							Type:        discordgo.ApplicationCommandOptionString,
@@ -53,8 +53,8 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "ips",
-					Description: "Extract domains from IP addresses or CIDR ranges",
+					Name:        "network",
+					Description: "Discover certificate domains from IPs and CIDRs",
 					Options: []*discordgo.ApplicationCommandOption{
 						{
 							Type:        discordgo.ApplicationCommandOptionString,
@@ -68,75 +68,34 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 							Description: "Text file containing one IP address or CIDR per line",
 							Required:    false,
 						},
-						{
-							Type:        discordgo.ApplicationCommandOptionString,
-							Name:        "ports",
-							Description: "Comma-separated TLS ports; defaults to 443",
-							Required:    false,
-						},
 					},
 				},
 			},
 		},
 		{
-			Name:                     "add",
-			Description:              "Store a value with an optional description",
-			DefaultMemberPermissions: &adminPermissions,
-			Contexts:                 &guildContexts,
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "data",
-					Description: "Single-line value to store",
-					Required:    true,
-					MaxLength:   4000,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "description",
-					Description: "Optional context for this value",
-					Required:    false,
-					MaxLength:   1000,
-				},
-			},
-		},
-		{
-			Name:                     "get",
-			Description:              "Retrieve stored data and saved scan information",
+			Name:                     "results",
+			Description:              "Retrieve saved domain reconnaissance",
 			DefaultMemberPermissions: &adminPermissions,
 			Contexts:                 &guildContexts,
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "storage",
-					Description: "Get values submitted through /add",
-					Options: []*discordgo.ApplicationCommandOption{
-						{
-							Type:        discordgo.ApplicationCommandOptionBoolean,
-							Name:        "descriptions",
-							Description: "Include optional descriptions in the output",
-							Required:    false,
-						},
-					},
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "scans",
-					Description: "Get saved /scan subs output",
+					Name:        "domain",
+					Description: "Get the latest saved domain scan results",
 					Options: []*discordgo.ApplicationCommandOption{
 						{
 							Type:        discordgo.ApplicationCommandOptionString,
-							Name:        "domain",
+							Name:        "query",
 							Description: "Root domain or wildcard, such as * or *example.com",
 							Required:    true,
 						},
 						{
 							Type:        discordgo.ApplicationCommandOptionString,
-							Name:        "content",
-							Description: "Result content; defaults to full",
+							Name:        "view",
+							Description: "Result view; defaults to details",
 							Required:    false,
 							Choices: []*discordgo.ApplicationCommandOptionChoice{
-								{Name: "full", Value: "full"},
+								{Name: "details", Value: "details"},
 								{Name: "urls", Value: "urls"},
 							},
 						},
@@ -155,13 +114,55 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "roots",
-					Description: "List root domains from /scan subs history",
+					Description: "List root domains from scan history",
 				},
 			},
 		},
 		{
-			Name:                     "queue",
-			Description:              "List or cancel current scans",
+			Name:                     "storage",
+			Description:              "Manage standalone shared data",
+			DefaultMemberPermissions: &adminPermissions,
+			Contexts:                 &guildContexts,
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "add",
+					Description: "Store a value with optional context",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "data",
+							Description: "Single-line value to store",
+							Required:    true,
+							MaxLength:   4000,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "description",
+							Description: "Optional context for this value",
+							Required:    false,
+							MaxLength:   1000,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "list",
+					Description: "List stored values",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionBoolean,
+							Name:        "descriptions",
+							Description: "Include optional descriptions in the output",
+							Required:    false,
+						},
+					},
+				},
+			},
+		},
+		{
+			Name:                     "jobs",
+			Description:              "List or cancel queued and running scans",
 			DefaultMemberPermissions: &adminPermissions,
 			Contexts:                 &guildContexts,
 			Options: []*discordgo.ApplicationCommandOption{
@@ -172,15 +173,15 @@ func commandDefinitions() []*discordgo.ApplicationCommand {
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "delete",
-					Description: "Cancel a scan and delete its related data",
+					Name:        "cancel",
+					Description: "Cancel a scan and remove its partial data",
 					Options: []*discordgo.ApplicationCommandOption{
 						{
 							Type:        discordgo.ApplicationCommandOptionInteger,
 							Name:        "id",
-							Description: "Queue ID shown by /queue list",
+							Description: "Job ID shown by /jobs list",
 							Required:    true,
-							MinValue:    &minimumQueueID,
+							MinValue:    &minimumJobID,
 						},
 					},
 				},
@@ -205,16 +206,16 @@ func (b *Bot) handleScan(session *discordgo.Session, event *discordgo.Interactio
 	}
 	options := event.ApplicationCommandData().Options
 	if len(options) != 1 || options[0].Type != discordgo.ApplicationCommandOptionSubCommand {
-		if err := respond(session, event, "Choose either `/scan subs` or `/scan ips`.", true); err != nil {
+		if err := respond(session, event, "Choose either `/scan domain` or `/scan network`.", true); err != nil {
 			log.Printf("validate /scan subcommand: %v", err)
 		}
 		return
 	}
 	switch options[0].Name {
-	case "subs":
-		b.handleSubs(session, event, options[0].Options)
-	case "ips":
-		b.handleIPs(session, event, options[0].Options)
+	case "domain":
+		b.handleDomainScan(session, event, options[0].Options)
+	case "network":
+		b.handleNetworkScan(session, event, options[0].Options)
 	default:
 		if err := respond(session, event, "Unknown `/scan` subcommand.", true); err != nil {
 			log.Printf("reject unknown /scan subcommand: %v", err)
@@ -222,11 +223,11 @@ func (b *Bot) handleScan(session *discordgo.Session, event *discordgo.Interactio
 	}
 }
 
-func (b *Bot) handleSubs(session *discordgo.Session, event *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
+func (b *Bot) handleDomainScan(session *discordgo.Session, event *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
 	domain, ok := stringOption(options, "domain")
 	if !ok {
 		if err := respond(session, event, "The `domain` option is required.", true); err != nil {
-			log.Printf("validate /scan subs: %v", err)
+			log.Printf("validate /scan domain: %v", err)
 		}
 		return
 	}
@@ -234,7 +235,7 @@ func (b *Bot) handleSubs(session *discordgo.Session, event *discordgo.Interactio
 
 	parent := b.context()
 	queueID := b.scanQueue.Submit(parent, scanqueue.KindSubs, domain, func(ctx context.Context) int64 {
-		return b.runSubs(ctx, session, event.ChannelID, event.Member.User.ID, domain, private)
+		return b.runDomainScan(ctx, session, event.ChannelID, event.Member.User.ID, domain, private)
 	})
 
 	destination := "this channel"
@@ -243,21 +244,21 @@ func (b *Bot) handleSubs(session *discordgo.Session, event *discordgo.Interactio
 	}
 	acknowledgement := fmt.Sprintf("Scan `#%d` queued for `%s`. The HTTPX results will be sent to %s when it finishes.", queueID, domain, destination)
 	if err := respond(session, event, acknowledgement, private); err != nil {
-		log.Printf("acknowledge /scan subs: %v", err)
+		log.Printf("acknowledge /scan domain: %v", err)
 		b.scanQueue.Delete(queueID)
 		return
 	}
 }
 
-func (b *Bot) runSubs(ctx context.Context, session *discordgo.Session, channelID, userID, domain string, private bool) int64 {
+func (b *Bot) runDomainScan(ctx context.Context, session *discordgo.Session, channelID, userID, domain string, private bool) int64 {
 	deliveryChannelID := channelID
 	if private {
 		directMessage, dmErr := session.UserChannelCreate(userID)
 		if dmErr != nil {
-			log.Printf("open DM for /scan subs requester %s: %v", userID, dmErr)
+			log.Printf("open DM for /scan domain requester %s: %v", userID, dmErr)
 			failure := fmt.Sprintf("<@%s> I couldn't open your DMs, so the private scan was not started.", userID)
 			if _, sendErr := session.ChannelMessageSend(channelID, failure); sendErr != nil {
-				log.Printf("report private /scan subs delivery failure: %v", sendErr)
+				log.Printf("report private /scan domain delivery failure: %v", sendErr)
 			}
 			return 0
 		}
@@ -282,7 +283,7 @@ func (b *Bot) runSubs(ctx context.Context, session *discordgo.Session, channelID
 			}
 		}
 		if _, sendErr := session.ChannelMessageSend(deliveryChannelID, content); sendErr != nil {
-			log.Printf("report /scan subs failure: %v", sendErr)
+			log.Printf("report /scan domain failure: %v", sendErr)
 		}
 		return result.RunID
 	}
@@ -298,41 +299,67 @@ func (b *Bot) runSubs(ctx context.Context, session *discordgo.Session, channelID
 			{Name: recon.HTTPXFilename, ContentType: "text/plain; charset=utf-8", Reader: strings.NewReader(result.HTTPXOutput)},
 		},
 	}); err != nil {
-		log.Printf("publish /scan subs results for %q: %v", domain, err)
+		log.Printf("publish /scan domain results for %q: %v", domain, err)
 		fallback := fmt.Sprintf("<@%s> scan completed for `%s`, but Discord rejected the HTTPX attachment. The results remain saved in SQLite.", userID, result.Domain)
 		if _, sendErr := session.ChannelMessageSend(deliveryChannelID, fallback); sendErr != nil {
-			log.Printf("report /scan subs publish failure: %v", sendErr)
+			log.Printf("report /scan domain publish failure: %v", sendErr)
 		}
 	}
 	return result.RunID
 }
 
-func (b *Bot) handleGetScans(session *discordgo.Session, event *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
-	domain, ok := stringOption(options, "domain")
+func (b *Bot) handleResults(session *discordgo.Session, event *discordgo.InteractionCreate) {
+	if !isAdministrator(event) {
+		if err := respond(session, event, "Only server administrators can use `/results`.", true); err != nil {
+			log.Printf("reject /results: %v", err)
+		}
+		return
+	}
+	options := event.ApplicationCommandData().Options
+	if len(options) != 1 || options[0].Type != discordgo.ApplicationCommandOptionSubCommand {
+		if err := respond(session, event, "Choose either `/results domain` or `/results roots`.", true); err != nil {
+			log.Printf("validate /results subcommand: %v", err)
+		}
+		return
+	}
+	switch options[0].Name {
+	case "domain":
+		b.handleDomainResults(session, event, options[0].Options)
+	case "roots":
+		b.handleRootResults(session, event)
+	default:
+		if err := respond(session, event, "Unknown `/results` subcommand.", true); err != nil {
+			log.Printf("reject unknown /results subcommand: %v", err)
+		}
+	}
+}
+
+func (b *Bot) handleDomainResults(session *discordgo.Session, event *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
+	query, ok := stringOption(options, "query")
 	if !ok {
-		if err := respond(session, event, "The `domain` option is required.", true); err != nil {
-			log.Printf("validate /get scans: %v", err)
+		if err := respond(session, event, "The `query` option is required.", true); err != nil {
+			log.Printf("validate /results domain: %v", err)
 		}
 		return
 	}
-	contentType, hasContentType := stringOption(options, "content")
-	if !hasContentType {
-		contentType = "full"
+	view, hasView := stringOption(options, "view")
+	if !hasView {
+		view = "details"
 	}
-	if contentType != "full" && contentType != "urls" {
-		if err := respond(session, event, "The `content` option must be `full` or `urls`.", true); err != nil {
-			log.Printf("validate /get scans content: %v", err)
+	if view != "details" && view != "urls" {
+		if err := respond(session, event, "The `view` option must be `details` or `urls`.", true); err != nil {
+			log.Printf("validate /results domain view: %v", err)
 		}
 		return
 	}
-	urlsOnly := contentType == "urls"
+	urlsOnly := view == "urls"
 	format, hasFormat := stringOption(options, "format")
 	if !hasFormat {
 		format = "txt"
 	}
 	if format != "txt" && format != "xlsx" {
 		if err := respond(session, event, "The `format` option must be `txt` or `xlsx`.", true); err != nil {
-			log.Printf("validate /get scans format: %v", err)
+			log.Printf("validate /results domain format: %v", err)
 		}
 		return
 	}
@@ -341,20 +368,20 @@ func (b *Bot) handleGetScans(session *discordgo.Session, event *discordgo.Intera
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{},
 	}); err != nil {
-		log.Printf("defer /get scans response: %v", err)
+		log.Printf("defer /results domain response: %v", err)
 		return
 	}
 
-	results, err := b.recon.Results(domain)
+	results, err := b.recon.Results(query)
 	if err != nil {
 		content := "Could not read previous scan results. Review the bot logs."
 		if errors.Is(err, recon.ErrResultsNotFound) {
-			content = fmt.Sprintf("No completed scan results found for `%s`.", domain)
+			content = fmt.Sprintf("No completed scan results found for `%s`.", query)
 		} else {
-			log.Printf("find /get scans for %q: %v", domain, err)
+			log.Printf("find /results domain for %q: %v", query, err)
 		}
 		if _, editErr := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &content}); editErr != nil {
-			log.Printf("report /get scans failure: %v", editErr)
+			log.Printf("report /results domain failure: %v", editErr)
 		}
 		return
 	}
@@ -364,16 +391,16 @@ func (b *Bot) handleGetScans(session *discordgo.Session, event *discordgo.Intera
 		outputs = append(outputs, result.HTTPXOutput)
 	}
 	content := fmt.Sprintf("Latest scan results for `%s`.", results[0].Domain)
-	if len(results) > 1 || strings.Contains(domain, "*") {
-		content = fmt.Sprintf("Scan results matching `%s`.", domain)
+	if len(results) > 1 || strings.Contains(query, "*") {
+		content = fmt.Sprintf("Scan results matching `%s`.", query)
 	}
 	if format == "xlsx" {
 		workbook, workbookErr := scanWorkbook(results, urlsOnly)
 		if workbookErr != nil {
-			log.Printf("build /get scans spreadsheet for %q: %v", domain, workbookErr)
+			log.Printf("build /results domain spreadsheet for %q: %v", query, workbookErr)
 			failure := "Could not create the XLSX scan results. Review the bot logs."
 			if _, editErr := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &failure}); editErr != nil {
-				log.Printf("report /get scans spreadsheet failure: %v", editErr)
+				log.Printf("report /results domain spreadsheet failure: %v", editErr)
 			}
 			return
 		}
@@ -387,7 +414,7 @@ func (b *Bot) handleGetScans(session *discordgo.Session, event *discordgo.Intera
 				{Name: filename, ContentType: xlsxContentType, Reader: bytes.NewReader(workbook)},
 			},
 		}); editErr != nil {
-			log.Printf("send XLSX /get scans for %q: %v", domain, editErr)
+			log.Printf("send XLSX /results domain for %q: %v", query, editErr)
 		}
 		return
 	}
@@ -405,7 +432,7 @@ func (b *Bot) handleGetScans(session *discordgo.Session, event *discordgo.Intera
 				{Name: recon.URLsFilename, ContentType: "text/plain; charset=utf-8", Reader: strings.NewReader(contents)},
 			},
 		}); editErr != nil {
-			log.Printf("send URL-only /get scans for %q: %v", domain, editErr)
+			log.Printf("send URL-only /results domain for %q: %v", query, editErr)
 		}
 		return
 	}
@@ -418,16 +445,16 @@ func (b *Bot) handleGetScans(session *discordgo.Session, event *discordgo.Intera
 			{Name: recon.HTTPXFilename, ContentType: "text/plain; charset=utf-8", Reader: strings.NewReader(combined)},
 		},
 	}); err != nil {
-		log.Printf("send /get scans for %q: %v", domain, err)
+		log.Printf("send /results domain for %q: %v", query, err)
 	}
 }
 
-func (b *Bot) handleGetRoots(session *discordgo.Session, event *discordgo.InteractionCreate) {
+func (b *Bot) handleRootResults(session *discordgo.Session, event *discordgo.InteractionCreate) {
 	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{},
 	}); err != nil {
-		log.Printf("defer /get roots response: %v", err)
+		log.Printf("defer /results roots response: %v", err)
 		return
 	}
 
@@ -437,10 +464,10 @@ func (b *Bot) handleGetRoots(session *discordgo.Session, event *discordgo.Intera
 		if errors.Is(err, recon.ErrResultsNotFound) {
 			content = "No saved scan history was found."
 		} else {
-			log.Printf("list /get roots: %v", err)
+			log.Printf("list /results roots: %v", err)
 		}
 		if _, editErr := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &content}); editErr != nil {
-			log.Printf("report /get roots failure: %v", editErr)
+			log.Printf("report /results roots failure: %v", editErr)
 		}
 		return
 	}
@@ -453,7 +480,7 @@ func (b *Bot) handleGetRoots(session *discordgo.Session, event *discordgo.Intera
 			{Name: recon.DomainsFilename, ContentType: "text/plain; charset=utf-8", Reader: strings.NewReader(contents)},
 		},
 	}); err != nil {
-		log.Printf("send /get roots: %v", err)
+		log.Printf("send /results roots: %v", err)
 	}
 }
 

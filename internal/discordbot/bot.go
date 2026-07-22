@@ -26,7 +26,7 @@ type IPScanner interface {
 	Scan(ctx context.Context, targets []string, ports string) (ipscan.Result, error)
 }
 
-// DataStore persists and retrieves values submitted through /add.
+// DataStore persists and retrieves values submitted through /storage add.
 type DataStore interface {
 	AddStoredItem(ctx context.Context, data, description string) (bool, error)
 	StoredItems(ctx context.Context) ([]database.StoredItem, error)
@@ -118,11 +118,11 @@ func (b *Bot) interactionHandler(session *discordgo.Session, event *discordgo.In
 		b.handlePing(session, event)
 	case "scan":
 		b.handleScan(session, event)
-	case "add":
-		b.handleAdd(session, event)
-	case "get":
-		b.handleGet(session, event)
-	case "queue":
-		b.handleQueue(session, event)
+	case "results":
+		b.handleResults(session, event)
+	case "storage":
+		b.handleStorage(session, event)
+	case "jobs":
+		b.handleJobs(session, event)
 	}
 }

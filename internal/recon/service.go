@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"path"
 	"sort"
 	"strings"
@@ -221,8 +222,9 @@ func (s *Service) Latest(rootDomain string) (Result, error) {
 }
 
 // Results returns completed HTTPX results matching a query. Exact domains
-// return only their newest run; queries containing * return every matching run,
-// ordered newest first. A query containing only * matches every completed run.
+// return only their newest run. Wildcards return the newest matching run per
+// root domain, ordered newest first. Repeated endpoints are retained only from
+// the newest selected run. A query containing only * matches every root domain.
 func (s *Service) Results(query string) ([]Result, error) {
 	query = strings.ToLower(strings.TrimSpace(query))
 	wildcard := strings.Contains(query, "*")
@@ -254,6 +256,7 @@ func (s *Service) Results(query string) ([]Result, error) {
 	}
 
 	results := make([]Result, 0)
+	selectedDomains := make(map[string]struct{})
 	for _, run := range runs {
 		matched := !wildcard && run.Domain == query
 		if wildcard {
@@ -261,6 +264,12 @@ func (s *Service) Results(query string) ([]Result, error) {
 		}
 		if !matched {
 			continue
+		}
+		if wildcard {
+			if _, selected := selectedDomains[run.Domain]; selected {
+				continue
+			}
+			selectedDomains[run.Domain] = struct{}{}
 		}
 		probes, probeErr := s.store.HTTPProbes(context.Background(), run.ID)
 		if probeErr != nil {
@@ -281,7 +290,48 @@ func (s *Service) Results(query string) ([]Result, error) {
 	if len(results) == 0 {
 		return nil, fmt.Errorf("%w for %s", ErrResultsNotFound, query)
 	}
-	return results, nil
+	return newestUniqueEndpoints(results), nil
+}
+
+// newestUniqueEndpoints expects results newest first. It keeps each HTTP(S)
+// endpoint in the first (therefore newest) result where it occurs and rebuilds
+// the display output so TXT and XLSX consumers receive the same records.
+func newestUniqueEndpoints(results []Result) []Result {
+	seen := make(map[string]struct{})
+	for resultIndex := range results {
+		filtered := make([]httpprobe.Result, 0, len(results[resultIndex].HTTPXResults))
+		outputLines := make([]string, 0, len(results[resultIndex].HTTPXResults))
+		for _, probe := range results[resultIndex].HTTPXResults {
+			key := endpointKey(probe.URL)
+			if key != "" {
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
+			}
+			filtered = append(filtered, probe)
+			if probe.CLIOutput != "" {
+				outputLines = append(outputLines, probe.CLIOutput)
+			}
+		}
+		results[resultIndex].HTTPXResults = filtered
+		results[resultIndex].HTTPXOutput = lines(outputLines)
+	}
+	return results
+}
+
+func endpointKey(value string) string {
+	parsed, err := url.ParseRequestURI(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return ""
+	}
+	parsed.Scheme = scheme
+	parsed.Host = strings.ToLower(parsed.Host)
+	return parsed.String()
 }
 
 // Domains returns every unique root domain represented in the saved scan history.

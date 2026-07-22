@@ -18,24 +18,22 @@ import (
 
 const maxTargetsFileBytes = 8 << 20
 
-func (b *Bot) handleIPs(session *discordgo.Session, event *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
+func (b *Bot) handleNetworkScan(session *discordgo.Session, event *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
 	data := event.ApplicationCommandData()
 	data.Options = options
 	inline, hasInline := stringOption(options, "targets")
 	attachment, hasAttachment := attachmentOption(data, "file")
 	if hasInline == hasAttachment {
 		if err := respond(session, event, "Provide exactly one of `targets` or `file`.", true); err != nil {
-			log.Printf("validate /scan ips input options: %v", err)
+			log.Printf("validate /scan network input options: %v", err)
 		}
 		return
 	}
-	ports, _ := stringOption(options, "ports")
-
 	if err := session.InteractionRespond(event.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{},
 	}); err != nil {
-		log.Printf("defer /scan ips response: %v", err)
+		log.Printf("defer /scan network response: %v", err)
 		return
 	}
 
@@ -59,41 +57,41 @@ func (b *Bot) handleIPs(session *discordgo.Session, event *discordgo.Interaction
 	}
 
 	queueID := b.scanQueue.Submit(b.context(), scanqueue.KindIPs, fmt.Sprintf("%d target entries", len(targets)), func(ctx context.Context) int64 {
-		return b.runIPs(ctx, session, event.ChannelID, event.Member.User.ID, targets, ports)
+		return b.runNetworkScan(ctx, session, event.ChannelID, event.Member.User.ID, targets)
 	})
-	acknowledgement := fmt.Sprintf("IP scan `#%d` queued with %d target entries.", queueID, len(targets))
+	acknowledgement := fmt.Sprintf("Network scan `#%d` queued with %d target entries.", queueID, len(targets))
 	if _, err := session.InteractionResponseEdit(event.Interaction, &discordgo.WebhookEdit{Content: &acknowledgement}); err != nil {
-		log.Printf("acknowledge /scan ips: %v", err)
+		log.Printf("acknowledge /scan network: %v", err)
 		b.scanQueue.Delete(queueID)
 		return
 	}
 }
 
-func (b *Bot) runIPs(ctx context.Context, session *discordgo.Session, channelID, userID string, targets []string, ports string) int64 {
-	result, err := b.ipScanner.Scan(ctx, targets, ports)
+func (b *Bot) runNetworkScan(ctx context.Context, session *discordgo.Session, channelID, userID string, targets []string) int64 {
+	result, err := b.ipScanner.Scan(ctx, targets, "")
 	if ctx.Err() != nil {
-		log.Printf("IP scan cancelled: %v", ctx.Err())
+		log.Printf("network scan cancelled: %v", ctx.Err())
 		return result.RunID
 	}
 	if err != nil {
-		log.Printf("run /scan ips: %v", err)
-		content := fmt.Sprintf("<@%s> IP scan failed. Review the bot logs.", userID)
+		log.Printf("run /scan network: %v", err)
+		content := fmt.Sprintf("<@%s> network scan failed. Review the bot logs.", userID)
 		if result.RunID != 0 {
-			content = fmt.Sprintf("<@%s> IP scan stopped. Partial scan data was saved in SQLite.", userID)
+			content = fmt.Sprintf("<@%s> network scan stopped. Partial scan data was saved in SQLite.", userID)
 		}
 		if _, sendErr := session.ChannelMessageSend(channelID, content); sendErr != nil {
-			log.Printf("report /scan ips failure: %v", sendErr)
+			log.Printf("report /scan network failure: %v", sendErr)
 		}
 		return result.RunID
 	}
 
 	if _, err := session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Content: fmt.Sprintf("<@%s> IP scan complete.", userID),
+		Content: fmt.Sprintf("<@%s> network scan complete.", userID),
 		Files: []*discordgo.File{
 			{Name: ipscan.ResultsFilename, ContentType: "text/plain; charset=utf-8", Reader: strings.NewReader(result.Output)},
 		},
 	}); err != nil {
-		log.Printf("publish /scan ips results: %v", err)
+		log.Printf("publish /scan network results: %v", err)
 	}
 	return result.RunID
 }
